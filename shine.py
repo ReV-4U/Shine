@@ -12,6 +12,7 @@ Mise en forme uniquement ; traitement 100 % local ; aucune donnée personnelle a
 from __future__ import annotations
 
 import contextlib
+import datetime as dt
 import io
 import os
 import sys
@@ -26,12 +27,30 @@ __version__ = "2.0.0"
 TITLE = "Shine"
 
 
-def process_folder(folder: str, output: str | None = None) -> tuple[int, str, Path | None]:
+def suggest_deadline(configured: str | None, today: dt.date | None = None, days: int = 14) -> str:
+    """Date proposée dans la fenêtre : celle de la configuration si c'est une date valide, sinon aujourd'hui + 14 jours."""
+    today = today or dt.date.today()
+    try:
+        return revue_droits.parse_deadline(configured or "")
+    except ValueError:
+        return (today + dt.timedelta(days=days)).strftime("%d/%m/%Y")
+
+
+def check_deadline(text: str, today: dt.date | None = None) -> str:
+    """Valide la saisie : date lisible et non passée. Renvoie JJ/MM/AAAA ou lève ValueError (message affichable)."""
+    today = today or dt.date.today()
+    d = revue_droits._parse_date(text)
+    if d < today:
+        raise ValueError("la date est déjà passée")
+    return d.strftime("%d/%m/%Y")
+
+
+def process_folder(folder: str, output: str | None = None, deadline: str | None = None) -> tuple[int, str, Path | None]:
     """Traite `folder` avec la configuration par défaut (+ shine.yaml voisin). Renvoie (code, résumé, dossier de sortie).
 
     Le résumé ne contient que des compteurs et des noms de dossiers/fichiers produits.
     """
-    argv = ["--input", folder] + (["--output", output] if output else [])
+    argv = ["--input", folder] + (["--output", output] if output else []) + (["--deadline", deadline] if deadline else [])
     args = revue_droits.parse_args(argv)
     buf_out, buf_err = io.StringIO(), io.StringIO()
     try:
@@ -59,7 +78,7 @@ def open_folder(path: Path) -> None:
 
 def gui() -> int:
     import tkinter as tk
-    from tkinter import filedialog, messagebox
+    from tkinter import filedialog, messagebox, simpledialog
 
     root = tk.Tk()
     root.withdraw()
@@ -70,6 +89,27 @@ def gui() -> int:
         root.destroy()
         return 0
 
+    # date limite : saisie par l'utilisateur au moment de compiler (proposition pré-remplie)
+    try:
+        import config as _config
+        configured = _config.load_config(revue_droits.default_user_config())["review"].get("deadline")
+    except Exception:  # noqa: BLE001
+        configured = None
+    deadline = None
+    proposal = suggest_deadline(configured)
+    while deadline is None:
+        answer = simpledialog.askstring(
+            TITLE, "Date limite de retour des classeurs par les ayants droit\n(format JJ/MM/AAAA) :",
+            initialvalue=proposal, parent=root)
+        if answer is None:                       # Annuler : on n'écrit rien
+            root.destroy()
+            return 0
+        try:
+            deadline = check_deadline(answer)
+        except ValueError as e:
+            proposal = answer
+            messagebox.showwarning(TITLE, f"Date non valide ({e}).\nExemple : 30/11/2026", parent=root)
+
     # petite fenêtre d'attente pendant que le traitement tourne dans un thread
     root.deiconify()
     root.title(TITLE)
@@ -77,7 +117,7 @@ def gui() -> int:
     root.resizable(False, False)
     tk.Label(root, text="Mise en forme en cours…\nMerci de patienter.", pady=22).pack()
     result: dict = {}
-    t = threading.Thread(target=lambda: result.update(r=process_folder(folder)), daemon=True)
+    t = threading.Thread(target=lambda: result.update(r=process_folder(folder, deadline=deadline)), daemon=True)
     t.start()
 
     def poll():

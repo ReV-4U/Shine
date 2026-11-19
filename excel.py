@@ -28,11 +28,27 @@ from xlsxwriter.utility import xl_col_to_name, xl_rowcol_to_cell
 
 from model import FULL, READ, Book, ResourceData, ScopeData
 
-SCHEMA_VERSION = 2
-TOOL_VERSION = "2.0.0"
+SCHEMA_VERSION = 3
+TOOL_VERSION = "2.1.0"
 
 LEVEL_LABELS = {FULL: "Modification", READ: "Lecture"}
-WANTED_RIGHTS = ["Modification", "Lecture"]
+ADD_COLS = ("Nom / Identifiant", "Groupe de ressource", "Justification")   # tableau « Personnes à ajouter » (Synthèse)
+# colonnes de l'onglet _meta (contrat phase 2) ; les blocs sont placés côte à côte
+META_SHEETS = ["sheet", "folder", "subpath", "resource", "group_full", "group_read", "header_row", "first_data_row",
+               "last_data_row", "n_rows", "comment_cell", "decision_cols", "key_col", "data_hash"]
+META_ROWS = ["sheet", "key", "sam", "level", "initial_row"]
+META_GROUPS = ["group", "sheet", "folder", "subpath", "resource", "level", "file"]
+META_C0 = 3
+META_C1 = META_C0 + len(META_SHEETS) + 1
+META_C2 = META_C1 + len(META_ROWS) + 1          # colonne de la liste « group » (source de la liste déroulante)
+SYN_HEAD_ROW = 3                                 # en-tête (0-based) du tableau de la Synthèse
+
+
+def syn_layout(n_resources: int) -> tuple[int, int, int, int]:
+    """(première ligne de données, dernière, ligne de total, titre du tableau « Personnes à ajouter »), 0-based."""
+    first = SYN_HEAD_ROW + 1
+    last = SYN_HEAD_ROW + max(n_resources, 1)
+    return first, last, last + 1, last + 4
 DROPDOWN_VALUES = ["Oui", "Non", "À vérifier"]
 NO_MEMBER = "Aucun membre"
 
@@ -77,9 +93,6 @@ class SheetInfo:
     last: int = 0
     n_rows: int = 0           # nombre de lignes de données (0 si ressource vide)
     header_row: int = _HEADER_ROW
-    add_header_row: int = 0
-    add_first: int = 0
-    add_last: int = 0
     comment_cell: str = ""
     dec_cols: tuple[int, ...] = ()
     key_col: int = 0
@@ -141,6 +154,8 @@ class BookBuilder:
         self.report = BookReport(str(path))
         self.used_names = set(_RESERVED)
         self.used_tables: set[str] = set()
+        self.add_title = self.add_header_row = self.add_first = self.add_last = 0
+        self.groups: list[dict] = []
         self.protect_opts = {"autofilter": True, "sort": True, "format_columns": True, "format_rows": True}
 
     # ------------------------------------------------------------------ utilitaires
@@ -182,6 +197,8 @@ class BookBuilder:
                     tag = "_" + (s.code or s.label)
                     base = r.name[: max(1, 31 - len(tag))] + tag
                 infos.append(SheetInfo(make_sheet_name(base, self.used_names), s, r))
+        self.add_title = syn_layout(len(infos))[3]
+        self.groups = self._groups(infos)
         for info in infos:
             self._resource_sheet(info)
 
@@ -197,6 +214,28 @@ class BookBuilder:
         self.report.rows = sum(i.n_rows for i in infos)
         self.report.data_hash = self._data_hash()
         return self.report
+
+    def _groups(self, infos: list[SheetInfo]) -> list[dict]:
+        """Groupes (fichiers CSV) du classeur : libellé affiché dans la liste « Groupe de ressource » + infos pour _meta.
+
+        Libellé = nom du fichier sans extension ; préfixé du dossier (et du sous-dossier) quand le classeur en regroupe
+        plusieurs, pour que deux ressources de même nom restent distinguables.
+        """
+        multi = len(self.book.scopes) > 1
+        out, seen = [], set()
+        for info in infos:
+            for lvl, g in ((FULL, info.res.full), (READ, info.res.read)):
+                if g is None:
+                    continue
+                parts = ([info.scope.name] if multi else []) + ([info.res.subpath] if info.res.subpath else []) + [g.stem]
+                label = base = " / ".join(parts)
+                k = 2
+                while label.casefold() in seen:
+                    label, k = f"{base} ({k})", k + 1
+                seen.add(label.casefold())
+                out.append({"group": label, "sheet": info.name, "folder": info.scope.name, "subpath": info.res.subpath,
+                            "resource": info.res.name, "level": lvl, "file": g.rel_path.rsplit("/", 1)[-1]})
+        return out
 
     def _data_hash(self) -> str:
         lines: list[str] = []
@@ -344,25 +383,6 @@ class BookBuilder:
                 ws.conditional_format(first, 0, last, dec_cols[-1], {"type": "formula", "criteria": crit,
                                                                      "format": fmt, "stop_if_true": True})
 
-        # ---- bloc « Personnes à ajouter » (sous le tableau)
-        add_title = last + 3
-        ws.write_string(add_title, 0, "Personnes à ajouter", F(bold=True, font_size=self.cfg["excel"]["font_size"] + 2, font_color=c["title"]))
-        ws.write_string(add_title + 1, 0, "Il manque quelqu'un ? Indiquez son nom ou identifiant, le droit souhaité et la justification.",
-                        F(italic=True, font_color="#595959"))
-        h = add_title + 2
-        info.add_header_row = h
-        for j, t in enumerate(("Nom / Identifiant", "Droit souhaité", "Justification")):
-            ws.write_string(h, j, t, self._hdr(input_col=True))
-        na = self.cfg["excel"]["add_rows"]
-        info.add_first, info.add_last = h + 1, h + na
-        add_fmt = F(locked=False, bg_color=c["input_bg"], border=1, border_color=c["input_border"], text_wrap=True)
-        for r in range(h + 1, h + na + 1):
-            for j in range(3):
-                ws.write_blank(r, j, None, add_fmt)
-        ws.data_validation(h + 1, 1, h + na, 1, {"validate": "list", "source": WANTED_RIGHTS, "ignore_blank": True,
-                                                  "error_title": "Valeur non autorisée",
-                                                  "error_message": "Choisissez Modification ou Lecture."})
-
         # ---- liens et progression (haut à droite)
         link = F(font_color="#0563C1", underline=1)
         rng = lambda col: f"'{sn}'!${xl_col_to_name(col)}${first + 1}:${xl_col_to_name(col)}${last + 1}"  # noqa: E731
@@ -372,7 +392,7 @@ class BookBuilder:
             ws.write_formula(0, c_com, '="Progression : "&(' + self._treated_formula(rng, dec_cols).lstrip("=") + f')&" / {n}"',
                              F(bold=True, font_color=c["title"], align="left"), f"Progression : 0 / {n}")
         ws.write_url(1, c_com, "internal:'Synthèse'!A1", link, "← Retour à la synthèse")
-        ws.write_url(2, c_com, f"internal:'{sn}'!A{add_title + 1}", link, "↓ Personnes à ajouter")
+        ws.write_url(2, c_com, f"internal:'Synthèse'!A{self.add_title + 1}", link, "↓ Personnes à ajouter (onglet Synthèse)")
 
         # ---- volets, impression, protection
         ws.freeze_panes(first, 0)
@@ -380,7 +400,7 @@ class BookBuilder:
         ws.set_paper(9)
         ws.fit_to_pages(1, 0)
         ws.repeat_rows(_HEADER_ROW)
-        ws.print_area(0, 0, info.add_last, c_com)
+        ws.print_area(0, 0, last, c_com)
         ws.set_margins(0.4, 0.4, 0.6, 0.6)
         ws.set_footer("&L&8&A&R&8Page &P / &N")
         self._protect(ws)
@@ -448,14 +468,15 @@ class BookBuilder:
         ws.hide_gridlines(2)
         heads = ["Ressource", "Dossier", "Membres Full", "Membres Read", "Lignes à traiter",
                  "Traitées", "À préciser", "Reste", "Avancement"]
-        widths = [max([len(i.res.name) for i in infos] + [10]) + 4, max([len(i.scope.name) for i in infos] + [8]) + 2,
+        widths = [max([len(i.res.name) for i in infos] + [24]) + 4,
+                  max([len(i.scope.name) for i in infos] + [len(g["group"]) for g in self.groups] + [22]) + 2,
                   13, 13, 14, 11, 11, 10, 12]
         for j, wd in enumerate(widths):
             ws.set_column(j, j, min(wd, 48))
         ws.write_string(0, 0, f"Synthèse – {self.book.label} – {self.period}", F(bold=True, font_size=15, font_color=c["title"]))
         ws.set_row(0, 26)
-        hrow = 3
-        first, last = hrow + 1, hrow + max(len(infos), 1)
+        hrow = SYN_HEAD_ROW
+        first, last, _tr, _at = syn_layout(len(infos))
         total_lines = sum(i.n_rows for i in infos)
         ws.write_string(1, 0, "Progression globale", F(bold=True, font_color=c["title"]))
         ws.write_formula(1, 1, f'=IFERROR(SUM(F{first + 1}:F{last + 1})/SUM(E{first + 1}:E{last + 1}),"—")',
@@ -511,6 +532,31 @@ class BookBuilder:
             ws.write_formula(tr, j, f"=SUBTOTAL(109,{col}{first + 1}:{col}{last + 1})", tot, cached[j])
         ws.write_formula(tr, 8, f'=IF(E{TR}=0,"—",F{TR}/E{TR})', F(num_format="0%", align="center", bold=True, **tb),
                          0 if total_lines else "—")
+
+        # ---- tableau « Personnes à ajouter » (sous le total) : une ligne = une personne et le groupe (fichier CSV) visé
+        at = self.add_title
+        ws.write_string(at, 0, "Personnes à ajouter", F(bold=True, font_size=self.cfg["excel"]["font_size"] + 2, font_color=c["title"]))
+        ws.write_string(at + 1, 0, "Il manque quelqu'un ? Indiquez son nom ou identifiant, le groupe de ressource concerné "
+                                   "(à choisir dans la liste) et la justification.", F(italic=True, font_color="#595959"))
+        h, last_col = at + 2, len(heads) - 1
+        self.add_header_row = h
+        ws.write_string(h, 0, ADD_COLS[0], self._hdr(input_col=True))
+        ws.write_string(h, 1, ADD_COLS[1], self._hdr(input_col=True))
+        ws.merge_range(h, 2, h, last_col, ADD_COLS[2], self._hdr(input_col=True))      # justification : C:I (valeur lue en C)
+        na = self.cfg["excel"]["add_rows"]
+        self.add_first, self.add_last = h + 1, h + na
+        add_fmt = F(locked=False, bg_color=c["input_bg"], border=1, border_color=c["input_border"], text_wrap=True)
+        for r in range(h + 1, h + na + 1):
+            ws.write_blank(r, 0, None, add_fmt)
+            ws.write_blank(r, 1, None, add_fmt)
+            ws.merge_range(r, 2, r, last_col, "", add_fmt)
+        if self.groups:
+            col = xl_col_to_name(META_C2)
+            ws.data_validation(h + 1, 1, h + na, 1, {
+                "validate": "list", "source": f"='_meta'!${col}$2:${col}${len(self.groups) + 1}", "ignore_blank": True,
+                "error_title": "Groupe non reconnu",
+                "error_message": "Choisissez un groupe dans la liste. S'il n'y figure pas, laissez la cellule vide "
+                                 "et précisez le groupe dans la justification."})
         ws.freeze_panes(first, 1)
         ws.set_landscape(); ws.set_paper(9); ws.fit_to_pages(1, 0); ws.repeat_rows(hrow)
         self._protect(ws)
@@ -533,6 +579,11 @@ class BookBuilder:
             ("n_resources", str(len(infos))),
             ("n_rows", str(sum(i.n_rows for i in infos))),
             ("data_hash", self._data_hash()),
+            ("add_sheet", "Synthèse"),
+            ("add_header_row", str(self.add_header_row + 1)),
+            ("add_first_row", str(self.add_first + 1)),
+            ("add_last_row", str(self.add_last + 1)),
+            ("add_columns", "A=personne ; B=groupe de ressource (liste MetaGroups.group) ; C=justification (fusion C:I, valeur en C)"),
             ("row_key", "sha1(dossier|sous-dossier|ressource|niveau|SamAccountName|n° d'occurrence)[:16], casse ignorée"),
         ]
         # bloc 1 : clé / valeur (colonnes A:B)
@@ -542,23 +593,18 @@ class BookBuilder:
             ws.write_string(i, 0, k, F())
             ws.write_string(i, 1, safe(v), F())
         # bloc 2 : feuilles
-        sh = ["sheet", "folder", "subpath", "resource", "group_full", "group_read", "header_row", "first_data_row",
-              "last_data_row", "n_rows", "add_header_row", "add_first_row", "add_last_row", "comment_cell",
-              "decision_cols", "key_col", "data_hash"]
-        c0 = 3
+        sh, c0 = META_SHEETS, META_C0
         ws.add_table(0, c0, max(len(infos), 1), c0 + len(sh) - 1, {
             "name": self._table_name("MetaSheets"), "style": None, "columns": [{"header": h} for h in sh]})
         for i, info in enumerate(infos, 1):
             dec = ",".join(xl_col_to_name(x) for x in info.dec_cols)
             vals = [info.name, info.scope.name, info.res.subpath, info.res.name, _group_name(info.res.full),
                     _group_name(info.res.read), info.header_row + 1, info.first + 1, info.last + 1, info.n_rows,
-                    info.add_header_row + 1, info.add_first + 1, info.add_last + 1, info.comment_cell, dec,
-                    xl_col_to_name(info.key_col), info.data_hash]
+                    info.comment_cell, dec, xl_col_to_name(info.key_col), info.data_hash]
             for j, v in enumerate(vals):
                 (ws.write_number if isinstance(v, int) else ws.write_string)(i, c0 + j, v if isinstance(v, int) else safe(v), F())
         # bloc 3 : lignes (clé stable → ligne initiale)
-        c1 = c0 + len(sh) + 1
-        rh = ["sheet", "key", "sam", "level", "initial_row"]
+        c1, rh = META_C1, META_ROWS
         total = sum(i.n_rows for i in infos)
         ws.add_table(0, c1, max(total, 1), c1 + len(rh) - 1, {
             "name": self._table_name("MetaRows"), "style": None, "columns": [{"header": h} for h in rh]})
@@ -571,6 +617,13 @@ class BookBuilder:
                 ws.write_string(r, c1 + 3, p.level, F())
                 ws.write_number(r, c1 + 4, info.first + 1 + k, F())
                 r += 1
+        # bloc 4 : groupes (source de la liste déroulante « Groupe de ressource » de la Synthèse)
+        c2, gh = META_C2, META_GROUPS
+        ws.add_table(0, c2, max(len(self.groups), 1), c2 + len(gh) - 1, {
+            "name": self._table_name("MetaGroups"), "style": None, "columns": [{"header": h} for h in gh]})
+        for i, g in enumerate(self.groups, 1):
+            for j, k in enumerate(gh):
+                ws.write_string(i, c2 + j, safe(g[k]), F())
         ws.set_column(0, 0, 18); ws.set_column(1, 1, 60)
         self._protect(ws)
 

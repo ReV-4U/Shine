@@ -7,7 +7,7 @@ Mise en forme uniquement : aucune fusion, aucun dédoublonnage, aucune analyse d
 
 Usage :
     python revue_droits.py --input <chemin> [--output <dossier>] [--config config.yaml]
-                           [--checkbox-mode native|dropdown] [--only <dossier>]...
+                           [--checkbox-mode native|dropdown] [--only <dossier>]... [--deadline JJ/MM/AAAA]
 
 Sortie (par défaut ~/Documents/shine) : un dossier `Revue_NTFS_<X>.<NOM>_JJMMAA` par dossier d'export,
 contenant le classeur compilé ; `rapport_lecture_JJMMAA.csv` à côté si des fichiers n'ont pas pu être lus.
@@ -51,6 +51,31 @@ def default_user_config() -> str | None:
     return str(f) if f.is_file() else None
 
 
+DEADLINE_FORMATS = ("%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%d/%m/%y", "%Y-%m-%d")
+
+
+def parse_deadline(text: str) -> str:
+    """Normalise une date saisie (JJ/MM/AAAA, JJ-MM-AAAA, JJ.MM.AAAA, AAAA-MM-JJ) en JJ/MM/AAAA. ValueError sinon."""
+    return _parse_date(text).strftime("%d/%m/%Y")
+
+
+def _parse_date(text: str) -> dt.date:
+    t = (text or "").strip()
+    for fmt in DEADLINE_FORMATS:
+        try:
+            return dt.datetime.strptime(t, fmt).date()
+        except ValueError:
+            continue
+    raise ValueError("format attendu : JJ/MM/AAAA")
+
+
+def _deadline_arg(s: str) -> str:
+    try:
+        return parse_deadline(s)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from e
+
+
 def _date(s: str) -> dt.date:
     try:
         return dt.date.fromisoformat(s)
@@ -68,6 +93,8 @@ def parse_args(argv=None):
     p.add_argument("--only", action="append", default=[], metavar="DOSSIER",
                    help="ne traiter que ce dossier (nom ou libellé) ; option répétable")
     p.add_argument("--period", help="période AAAA-MM du nom de fichier (défaut : mois courant)")
+    p.add_argument("--deadline", type=_deadline_arg, metavar="JJ/MM/AAAA",
+                   help="date limite de retour des classeurs, affichée dans l'onglet Instructions (défaut : review.deadline)")
     p.add_argument("--export-date", type=_date, help="date de l'export AAAA-MM-JJ (défaut : date des fichiers CSV)")
     p.add_argument("-v", "--verbose", action="store_true")
     return p.parse_args(argv)
@@ -80,6 +107,8 @@ def run(args, now: dt.datetime | None = None) -> int:
     except (ConfigError, OSError) as e:
         print(f"Configuration invalide : {e}", file=sys.stderr)
         return 2
+    if args.deadline:
+        cfg["review"]["deadline"] = args.deadline
     mode = args.checkbox_mode or cfg["excel"]["checkbox_mode"]
     now = now or dt.datetime.now()
     period = args.period or cfg["review"].get("period") or now.strftime("%Y-%m")
@@ -127,6 +156,11 @@ def run(args, now: dt.datetime | None = None) -> int:
     for code, n in sorted(by_code.items(), key=lambda kv: (-kv[1], kv[0])):
         print(f"   - {code:<22} {n}")
     print(f"Mode de réponse    : {mode}")
+    print(f"Date limite        : {cfg['review']['deadline']}")
+    for label, value, how in (("date limite", cfg["review"]["deadline"], "--deadline"),
+                              ("contact", cfg["review"]["contact"], "review.contact dans shine.yaml")):
+        if str(value).strip().startswith("[") or not str(value).strip():
+            print(f"ATTENTION : {label} non renseigné(e) : les classeurs afficheront un texte à compléter ({how}).")
     print(f"Dossier de sortie  : {out}")
     print("Fichiers produits  :")
     for r in reports:

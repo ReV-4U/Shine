@@ -29,10 +29,12 @@ python -m pytest
 
 ## Utilisation simple : `Shine.exe`
 
-Double-clic → une fenêtre demande **le dossier global** (ex. `Liaison`) → mise en forme → message de fin avec les
+Double-clic → une fenêtre demande **le dossier global** (ex. `Liaison`), puis **la date limite de retour** des classeurs
+(JJ/MM/AAAA, non passée ; une date est proposée par défaut) → mise en forme → message de fin avec les
 compteurs → le dossier de sortie (`Documents\shine`) s'ouvre. Aucune console, aucune option à connaître.
 Avec des arguments (`Shine.exe --input … --output …`), l'exécutable se comporte comme la ligne de commande
-décrite ci-dessous. Un fichier `shine.yaml` posé **à côté de `Shine.exe`** (ou de `shine.py`) est chargé
+décrite ci-dessous. Le contact (et l'organisation) se renseignent dans `shine.yaml` (`review.contact`) ; la date limite,
+elle, est saisie au lancement. Un fichier `shine.yaml` posé **à côté de `Shine.exe`** (ou de `shine.py`) est chargé
 automatiquement (date limite, contact, `show_dn`, `owners`…) : il suffit d'y mettre ce qui change.
 
 ### Construire `Shine.exe` (`build_exe.bat`)
@@ -69,6 +71,7 @@ Le script n'a pas été testé sur tous les postes : au premier essai, relever l
 | `--config` | YAML fusionné avec `config.yaml` (les listes remplacent, les dictionnaires fusionnent) |
 | `--checkbox-mode` | `dropdown` (défaut) ou `native` |
 | `--only` | ne traiter que ce dossier (nom ou libellé), option répétable |
+| `--deadline` | date limite de retour JJ/MM/AAAA, affichée dans l'onglet Instructions (par défaut : `review.deadline`) |
 | `--period` | période du nom de fichier (défaut : mois courant) |
 | `--export-date` | date de l'export affichée (défaut : date de modification des CSV) |
 | `-v` | messages détaillés (jamais de données personnelles) |
@@ -112,10 +115,14 @@ si `owners:` regroupe plusieurs dossiers. Relancer le même jour écrase les fic
   l'export), commentaire général, puis un tableau filtrable à volets figés :
   `Nom | Identifiant | Droit actuel | Accès légitime ? | Commentaire | Clé (masquée)`.
   Les lignes sont triées : Modification puis Lecture, puis nom, puis identifiant. Colonne `DN (annuaire)`
-  optionnelle (`excel.show_dn: true`). Sous le tableau : bloc **Personnes à ajouter** (`excel.add_rows`
-  lignes : Nom / Identifiant, Droit souhaité, Justification).
+  optionnelle (`excel.show_dn: true`).
 * **Synthèse** : par ressource, membres Full / Read, lignes à traiter, traitées, à préciser, reste,
   avancement — par formules, avec lien vers l'onglet et totaux (`SUBTOTAL`, sensibles aux filtres).
+  En dessous du total : le tableau **Personnes à ajouter** (`excel.add_rows` lignes, 20 par défaut) :
+  `Nom / Identifiant | Groupe de ressource | Justification`. « Groupe de ressource » est une liste déroulante des
+  **fichiers CSV du classeur** (nom sans extension, ex. `Activites_etudes_Full`, `Activites_etudes_Read`) : la personne
+  est à ajouter à ce groupe. Quand un classeur regroupe plusieurs dossiers (`owners:`), les libellés sont préfixés du
+  dossier (`Export_E.Test7 / Documentation_INTERNE_Full`). Chaque feuille de ressource renvoie à ce tableau par un lien.
 * **Non traité = cellule vide.** Couleurs par mise en forme conditionnelle : vert = validé, rouge = à retirer,
   jaune = à vérifier, gris zébré = non traité.
 * Mise en page : police unique, couleurs en paramètres (`excel.colors`), impression A4 paysage ajustée en
@@ -148,17 +155,20 @@ relecture). Un onglet masqué se réaffiche en deux clics : `_meta` ne contient 
 
 ## Phase 2 — contrat de relecture (`ingest`, non implémenté)
 
-* Aucune cellule fusionnée dans les zones de données (seul le commentaire général, hors tableau, est fusionné).
+* Aucune cellule fusionnée dans les zones de données des feuilles de ressource (seul le commentaire général, hors
+  tableau, est fusionné). Exception : dans le tableau « Personnes à ajouter » de la Synthèse, la justification occupe
+  C:I par ligne (valeur lue en colonne C).
 * Chaque ligne porte une **clé stable** (colonne masquée) :
   `sha1(dossier | sous-dossier | ressource | niveau | identifiant | n° d'occurrence)[:16]`, casse ignorée,
   indépendante du chemin d'entrée. Le niveau (`full` / `read`) et le numéro d'occurrence font que deux lignes
   identiques d'un même fichier gardent des clés distinctes.
-* `_meta` (schéma v2) contient trois tableaux Excel : `MetaKV_*` (`schema_version`, `tool_version`,
+* `_meta` (schéma v3) contient quatre tableaux Excel : `MetaKV_*` (`schema_version`, `tool_version`,
   `generated_at`, `period`, `workbook_label`, `folders`, `export_dates`, `checkbox_mode`, `decision_values`,
-  `n_resources`, `n_rows`, `data_hash`, `row_key`) ; `MetaSheets_*` (`sheet, folder, subpath, resource,
-  group_full, group_read, header_row, first_data_row, last_data_row, n_rows, add_header_row, add_first_row,
-  add_last_row, comment_cell, decision_cols, key_col, data_hash`) ; `MetaRows_*` (`sheet, key, sam, level,
-  initial_row`).
+  `n_resources`, `n_rows`, `data_hash`, `row_key`, et pour le tableau d'ajout : `add_sheet`, `add_header_row`,
+  `add_first_row`, `add_last_row`, `add_columns`) ; `MetaSheets_*` (`sheet, folder, subpath, resource,
+  group_full, group_read, header_row, first_data_row, last_data_row, n_rows, comment_cell, decision_cols, key_col,
+  data_hash`) ; `MetaRows_*` (`sheet, key, sam, level, initial_row`) ; `MetaGroups_*` (`group, sheet, folder,
+  subpath, resource, level, file` : source de la liste « Groupe de ressource »).
 * Un classeur dont `schema_version` ou `data_hash` ne correspond pas à l'export de référence doit être refusé.
 
 ## Organisation
