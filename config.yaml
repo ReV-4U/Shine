@@ -1,0 +1,96 @@
+# Configuration de revue_droits.py
+# L'outil ne fait que de la MISE EN FORME des exports (aucune analyse des données).
+# Ici : nommage des classeurs, couleurs, textes de l'onglet « Instructions », mode de réponse.
+# Les listes données dans un fichier --config REMPLACENT celles de ce fichier ;
+# les dictionnaires sont fusionnés clé par clé.
+
+input:
+  # Un dossier de périmètre correspond à ce motif (groupes nommés : code, name).
+  # Hypothèse par défaut : Export_<X>.<Nom>. Le sens de <X> et <Nom> n'est PAS
+  # présumé : il suffit d'adapter le gabarit ci-dessous.
+  folder_pattern: '^Export_(?P<code>[^.]+)\.(?P<name>.+)$'
+  # Libellé du périmètre, utilisé dans le nom du classeur et dans les en-têtes.
+  # Variables : {folder} = nom du dossier sans « Export_ », {code}, {name}, {full} = nom complet.
+  #   '{folder}' -> E.Test7     '{name}' -> Test7     '{code}' -> E
+  workbook_label: '{folder}'
+
+# Regroupement optionnel : plusieurs dossiers d'un même ayant droit dans UN classeur.
+# Clé = nom exact du dossier (casse ignorée), valeur = libellé de l'ayant droit.
+# Exemple :
+#   owners:
+#     Export_E.Test7: Dupont
+#     Export_F.Test10: Dupont
+# Vide = un classeur par dossier (comportement par défaut).
+owners: {}
+
+resources:
+  # Suffixes de niveau, insensibles à la casse. La ressource = nom privé du suffixe.
+  suffix_full: '_Full'
+  suffix_read: '_Read'
+
+excel:
+  # dropdown : liste Oui / Non / À vérifier (une colonne, 3 états, compatible partout)
+  # native   : vraies cases à cocher (Excel 365). Une case n'a que 2 états : deux colonnes
+  #            « Conserver » / « Retirer » sont créées pour distinguer « non traité » de « à retirer ».
+  checkbox_mode: dropdown
+  add_rows: 10               # lignes du bloc « Personnes à ajouter »
+  show_dn: false             # true : ajoute une colonne « DN (annuaire) » avec le DN tel qu'exporté
+  font: Calibri
+  font_size: 10
+  protect_sheets: true       # protection SANS mot de passe
+  colors:                    # charte (hex)
+    header_bg:   '#1F3864'
+    header_font: '#FFFFFF'
+    input_header_bg: '#C55A11'   # en-têtes des colonnes à remplir
+    title:       '#1F3864'
+    border:      '#BFBFBF'
+    input_border: '#2E75B6'
+    input_bg:    '#FFF9E5'       # zones remplissables
+    ok:          '#C6EFCE'       # validé
+    ko:          '#FFC7CE'       # à retirer
+    pending:     '#FFEB9C'       # à vérifier / à préciser
+    todo_even:   '#E9E9E9'       # non traité (zébrage)
+    todo_odd:    '#F4F4F4'
+
+review:
+  organisation: ''
+  deadline: '[date limite à renseigner]'
+  contact: '[contact à renseigner]'
+  period: null               # AAAA-MM ; défaut = mois courant (surcharge : --period)
+
+texts:
+  instructions_title: "Revue des droits d'accès – {label} – {period}"
+  objective: >-
+    Cette revue périodique vérifie que seules les personnes légitimes ont accès aux
+    ressources de partage de fichiers dont vous êtes responsable. Pour chaque personne
+    listée, indiquez si son accès est justifié.
+  steps_dropdown:
+    - "Ouvrez l'onglet « Synthèse » : chaque ressource à vérifier y figure avec un lien vers son onglet."
+    - "Dans l'onglet d'une ressource, parcourez la liste. Pour chaque ligne, choisissez dans la colonne « Accès légitime ? » : Oui (accès justifié), Non (accès à retirer) ou À vérifier (vous ne savez pas encore)."
+    - "Laissez la cellule vide tant que vous n'avez pas traité la ligne : vide = non traité."
+    - "Une même personne peut apparaître deux fois (un accès en Modification et un accès en Lecture) : chaque ligne se valide séparément."
+    - "Ajoutez un commentaire dans la colonne « Commentaire » si nécessaire."
+    - "Il manque quelqu'un ? Renseignez le bloc « Personnes à ajouter » sous la liste : nom ou identifiant, droit souhaité (Modification ou Lecture), justification."
+    - "Vous pouvez saisir un commentaire général sur la ressource en haut de son onglet."
+  steps_native:
+    - "Ouvrez l'onglet « Synthèse » : chaque ressource à vérifier y figure avec un lien vers son onglet."
+    - "Dans l'onglet d'une ressource, parcourez la liste. Cochez « Conserver » si l'accès est justifié, ou « Retirer » s'il doit être supprimé. Ne cochez jamais les deux."
+    - "Laissez les deux cases vides tant que vous n'avez pas traité la ligne : vide = non traité."
+    - "Une même personne peut apparaître deux fois (un accès en Modification et un accès en Lecture) : chaque ligne se valide séparément."
+    - "Ajoutez un commentaire dans la colonne « Commentaire » si nécessaire."
+    - "Il manque quelqu'un ? Renseignez le bloc « Personnes à ajouter » sous la liste : nom ou identifiant, droit souhaité (Modification ou Lecture), justification."
+    - "Vous pouvez saisir un commentaire général sur la ressource en haut de son onglet."
+  return_line: "Enregistrez le fichier puis renvoyez-le à {contact} avant le {deadline}. Ne renommez pas les onglets et ne modifiez pas la structure du classeur."
+  protection_note: "Le classeur est protégé (sans mot de passe) : seules les zones à remplir sont modifiables. Les filtres restent utilisables ; pour trier, préférez les filtres (Excel interdit le tri dès qu'une cellule de la plage est verrouillée)."
+  legend:
+    ok: "Accès validé"
+    ko: "Accès à retirer"
+    pending: "À vérifier / à préciser"
+    todo: "Non traité"
+    input: "Zone à remplir"
+
+output:
+  root: '~/Documents/shine'                 # dossier de sortie par défaut (créé si besoin) ; --output le remplace
+  folder_pattern: 'Revue_NTFS_{label}_{date}'   # un dossier par classeur ; {label} = E.Test7 (voir input.workbook_label)
+  date_format: '%d%m%y'                     # JJMMAA, date du jour de génération
+  report_delimiter: ';'      # séparateur de rapport_lecture.csv (';' s'ouvre directement dans Excel français)

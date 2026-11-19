@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+# Shine — mise en forme des exports de droits pour revue. Copyright (c) 2026 ReV. Licence non commerciale (voir LICENSE).
+# Conçu par ReV, développé avec l'assistance de Claude (Anthropic).
+"""Shine — point d'entrée.
+
+* Double-clic sur Shine.exe (ou `python shine.py` sans argument) : une fenêtre demande le dossier global
+  (ex. « Liaison »), le traitement se lance, puis le dossier de sortie s'ouvre.
+* Avec des arguments (`Shine.exe --input … --output …`) : mode ligne de commande de revue_droits.py.
+
+Mise en forme uniquement ; traitement 100 % local ; aucune donnée personnelle affichée.
+"""
+from __future__ import annotations
+
+import contextlib
+import io
+import os
+import sys
+import threading
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import revue_droits  # noqa: E402
+
+__version__ = "2.0.0"
+TITLE = "Shine"
+
+
+def process_folder(folder: str, output: str | None = None) -> tuple[int, str, Path | None]:
+    """Traite `folder` avec la configuration par défaut (+ shine.yaml voisin). Renvoie (code, résumé, dossier de sortie).
+
+    Le résumé ne contient que des compteurs et des noms de dossiers/fichiers produits.
+    """
+    argv = ["--input", folder] + (["--output", output] if output else [])
+    args = revue_droits.parse_args(argv)
+    buf_out, buf_err = io.StringIO(), io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf_out), contextlib.redirect_stderr(buf_err):
+            rc = revue_droits.run(args)
+    except Exception as e:  # noqa: BLE001 - la fenêtre doit toujours pouvoir afficher quelque chose
+        return 1, f"Erreur inattendue ({type(e).__name__}). Le traitement a été interrompu.", None
+    text = (buf_err.getvalue() if rc else buf_out.getvalue()).strip()
+    if rc == 0 and "=== Résumé ===" in text:
+        text = text.split("=== Résumé ===", 1)[1].strip()
+    return rc, text or "Aucune information.", getattr(args, "resolved_output", None)
+
+
+def open_folder(path: Path) -> None:
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(str(path))  # type: ignore[attr-defined]  # noqa: S606
+        elif sys.platform == "darwin":
+            os.system(f'open "{path}"')  # noqa: S605
+        else:
+            os.system(f'xdg-open "{path}" >/dev/null 2>&1 &')  # noqa: S605
+    except OSError:
+        pass
+
+
+def gui() -> int:
+    import tkinter as tk
+    from tkinter import filedialog, messagebox
+
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    folder = filedialog.askdirectory(parent=root, title="Shine — choisissez le dossier global (ex. : Liaison)",
+                                     mustexist=True)
+    if not folder:
+        root.destroy()
+        return 0
+
+    # petite fenêtre d'attente pendant que le traitement tourne dans un thread
+    root.deiconify()
+    root.title(TITLE)
+    root.geometry("380x90")
+    root.resizable(False, False)
+    tk.Label(root, text="Mise en forme en cours…\nMerci de patienter.", pady=22).pack()
+    result: dict = {}
+    t = threading.Thread(target=lambda: result.update(r=process_folder(folder)), daemon=True)
+    t.start()
+
+    def poll():
+        if t.is_alive():
+            root.after(150, poll)
+        else:
+            root.withdraw()
+            rc, text, out = result["r"]
+            if rc == 0:
+                messagebox.showinfo(TITLE, f"Terminé.\n\n{text}", parent=root)
+                if out:
+                    open_folder(out)
+            else:
+                messagebox.showerror(TITLE, f"Le traitement n'a pas abouti.\n\n{text}", parent=root)
+            root.destroy()
+    root.after(150, poll)
+    root.mainloop()
+    return 0 if result.get("r", (1,))[0] == 0 else 1
+
+
+def main(argv=None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    return revue_droits.main(argv) if argv else gui()
+
+
+if __name__ == "__main__":
+    sys.exit(main())
