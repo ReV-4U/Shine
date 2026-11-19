@@ -55,7 +55,7 @@ excel:
 review:
   organisation: ''
   deadline: '[date limite à renseigner]'   # valeur d'attente : Shine.exe demande la date au lancement ; en ligne de commande, utiliser --deadline
-  contact: '[contact à renseigner]'         # valeur d'attente : Shine.exe demande le contact au lancement ; en ligne de commande, utiliser --contact
+  contact: '[contact à renseigner]'
   period: null               # AAAA-MM ; défaut = mois courant (surcharge : --period)
 
 texts:
@@ -70,7 +70,7 @@ texts:
     - "Laissez la cellule vide tant que vous n'avez pas traité la ligne : vide = non traité."
     - "Une même personne peut apparaître deux fois (un accès en Modification et un accès en Lecture) : chaque ligne se valide séparément."
     - "Ajoutez un commentaire dans la colonne « Commentaire » si nécessaire."
-    - "Il manque quelqu'un ? Renseignez le tableau « Personnes à ajouter » en bas de l'onglet Synthèse : nom ou identifiant, groupe de ressource (à choisir dans la liste), justification."
+    - "Il manque quelqu'un ? Renseignez le tableau « Personnes à ajouter » en bas de l'onglet Synthèse : nom, identifiant (facultatif), groupe de ressource (à choisir dans la liste), justification."
     - "Vous pouvez saisir un commentaire général sur la ressource en haut de son onglet."
   steps_native:
     - "Ouvrez l'onglet « Synthèse » : chaque ressource à vérifier y figure avec un lien vers son onglet."
@@ -78,7 +78,7 @@ texts:
     - "Laissez les deux cases vides tant que vous n'avez pas traité la ligne : vide = non traité."
     - "Une même personne peut apparaître deux fois (un accès en Modification et un accès en Lecture) : chaque ligne se valide séparément."
     - "Ajoutez un commentaire dans la colonne « Commentaire » si nécessaire."
-    - "Il manque quelqu'un ? Renseignez le tableau « Personnes à ajouter » en bas de l'onglet Synthèse : nom ou identifiant, groupe de ressource (à choisir dans la liste), justification."
+    - "Il manque quelqu'un ? Renseignez le tableau « Personnes à ajouter » en bas de l'onglet Synthèse : nom, identifiant (facultatif), groupe de ressource (à choisir dans la liste), justification."
     - "Vous pouvez saisir un commentaire général sur la ressource en haut de son onglet."
   return_line: "Enregistrez le fichier puis renvoyez-le à {contact} avant le {deadline}. Ne renommez pas les onglets et ne modifiez pas la structure du classeur."
   protection_note: "Le classeur est protégé (sans mot de passe) : seules les zones à remplir sont modifiables. Les filtres restent utilisables ; pour trier, préférez les filtres (Excel interdit le tri dès qu'une cellule de la plage est verrouillée)."

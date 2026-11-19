@@ -121,7 +121,7 @@ si `owners:` regroupe plusieurs dossiers. Relancer le même jour écrase les fic
 * **Synthèse** : par ressource, membres Full / Read, lignes à traiter, traitées, à préciser, reste,
   avancement — par formules, avec lien vers l'onglet et totaux (`SUBTOTAL`, sensibles aux filtres).
   En dessous du total : le tableau **Personnes à ajouter** (`excel.add_rows` lignes, 20 par défaut) :
-  `Nom / Identifiant | Groupe de ressource | Justification`. « Groupe de ressource » est une liste déroulante des
+  `Nom | Identifiant (optionnel) | Groupe de ressource | Justification`. « Groupe de ressource » est une liste déroulante des
   **fichiers CSV du classeur** (nom sans extension, ex. `Activites_etudes_Full`, `Activites_etudes_Read`) : la personne
   est à ajouter à ce groupe. Quand un classeur regroupe plusieurs dossiers (`owners:`), les libellés sont préfixés du
   dossier (`Export_E.Test7 / Documentation_INTERNE_Full`). Chaque feuille de ressource renvoie à ce tableau par un lien.
@@ -158,8 +158,8 @@ relecture). Un onglet masqué se réaffiche en deux clics : `_meta` ne contient 
 ## Phase 2 — contrat de relecture (`ingest`, non implémenté)
 
 * Aucune cellule fusionnée dans les zones de données des feuilles de ressource (seul le commentaire général, hors
-  tableau, est fusionné). Exception : dans le tableau « Personnes à ajouter » de la Synthèse, la justification occupe
-  C:I par ligne (valeur lue en colonne C).
+  tableau, est fusionné). Exception : dans le tableau « Personnes à ajouter » de la Synthèse, le groupe de ressource
+  occupe C:E et la justification F:I par ligne (valeurs lues en colonnes C et F ; nom en A, identifiant facultatif en B).
 * Chaque ligne porte une **clé stable** (colonne masquée) :
   `sha1(dossier | sous-dossier | ressource | niveau | identifiant | n° d'occurrence)[:16]`, casse ignorée,
   indépendante du chemin d'entrée. Le niveau (`full` / `read`) et le numéro d'occurrence font que deux lignes
@@ -167,7 +167,7 @@ relecture). Un onglet masqué se réaffiche en deux clics : `_meta` ne contient 
 * `_meta` (schéma v3) contient quatre tableaux Excel : `MetaKV_*` (`schema_version`, `tool_version`,
   `generated_at`, `period`, `workbook_label`, `folders`, `export_dates`, `checkbox_mode`, `decision_values`,
   `n_resources`, `n_rows`, `data_hash`, `row_key`, et pour le tableau d'ajout : `add_sheet`, `add_header_row`,
-  `add_first_row`, `add_last_row`, `add_columns`) ; `MetaSheets_*` (`sheet, folder, subpath, resource,
+  `add_first_row`, `add_last_row`, `add_col_name`, `add_col_sam`, `add_col_group`, `add_col_justification`) ; `MetaSheets_*` (`sheet, folder, subpath, resource,
   group_full, group_read, header_row, first_data_row, last_data_row, n_rows, comment_cell, decision_cols, key_col,
   data_hash`) ; `MetaRows_*` (`sheet, key, sam, level, initial_row`) ; `MetaGroups_*` (`group, sheet, folder,
   subpath, resource, level, file` : source de la liste « Groupe de ressource »).

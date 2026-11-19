@@ -32,7 +32,9 @@ SCHEMA_VERSION = 3
 TOOL_VERSION = "2.1.0"
 
 LEVEL_LABELS = {FULL: "Modification", READ: "Lecture"}
-ADD_COLS = ("Nom / Identifiant", "Groupe de ressource", "Justification")   # tableau « Personnes à ajouter » (Synthèse)
+ADD_COLS = ("Nom", "Identifiant (optionnel)", "Groupe de ressource", "Justification")   # tableau « Personnes à ajouter » (Synthèse)
+ADD_GROUP_SPAN = (2, 4)      # colonnes C:E fusionnées par ligne (liste « Groupe de ressource »), valeur lue en C
+ADD_JUSTIF_SPAN = (5, 8)     # colonnes F:I fusionnées par ligne, valeur lue en F
 # colonnes de l'onglet _meta (contrat phase 2) ; les blocs sont placés côte à côte
 META_SHEETS = ["sheet", "folder", "subpath", "resource", "group_full", "group_read", "header_row", "first_data_row",
                "last_data_row", "n_rows", "comment_cell", "decision_cols", "key_col", "data_hash"]
@@ -536,23 +538,27 @@ class BookBuilder:
         # ---- tableau « Personnes à ajouter » (sous le total) : une ligne = une personne et le groupe (fichier CSV) visé
         at = self.add_title
         ws.write_string(at, 0, "Personnes à ajouter", F(bold=True, font_size=self.cfg["excel"]["font_size"] + 2, font_color=c["title"]))
-        ws.write_string(at + 1, 0, "Il manque quelqu'un ? Indiquez son nom ou identifiant, le groupe de ressource concerné "
-                                   "(à choisir dans la liste) et la justification.", F(italic=True, font_color="#595959"))
-        h, last_col = at + 2, len(heads) - 1
+        ws.write_string(at + 1, 0, "Il manque quelqu'un ? Indiquez son nom (et son identifiant s'il est connu), le groupe de ressource "
+                                   "concerné (à choisir dans la liste) et la justification.", F(italic=True, font_color="#595959"))
+        h = at + 2
+        (g0, g1), (j0, j1) = ADD_GROUP_SPAN, ADD_JUSTIF_SPAN
+        assert j1 == len(heads) - 1
         self.add_header_row = h
         ws.write_string(h, 0, ADD_COLS[0], self._hdr(input_col=True))
         ws.write_string(h, 1, ADD_COLS[1], self._hdr(input_col=True))
-        ws.merge_range(h, 2, h, last_col, ADD_COLS[2], self._hdr(input_col=True))      # justification : C:I (valeur lue en C)
+        ws.merge_range(h, g0, h, g1, ADD_COLS[2], self._hdr(input_col=True))           # groupe : C:E (valeur lue en C)
+        ws.merge_range(h, j0, h, j1, ADD_COLS[3], self._hdr(input_col=True))           # justification : F:I (valeur lue en F)
         na = self.cfg["excel"]["add_rows"]
         self.add_first, self.add_last = h + 1, h + na
         add_fmt = F(locked=False, bg_color=c["input_bg"], border=1, border_color=c["input_border"], text_wrap=True)
         for r in range(h + 1, h + na + 1):
             ws.write_blank(r, 0, None, add_fmt)
             ws.write_blank(r, 1, None, add_fmt)
-            ws.merge_range(r, 2, r, last_col, "", add_fmt)
+            ws.merge_range(r, g0, r, g1, "", add_fmt)
+            ws.merge_range(r, j0, r, j1, "", add_fmt)
         if self.groups:
             col = xl_col_to_name(META_C2)
-            ws.data_validation(h + 1, 1, h + na, 1, {
+            ws.data_validation(h + 1, g0, h + na, g0, {
                 "validate": "list", "source": f"='_meta'!${col}$2:${col}${len(self.groups) + 1}", "ignore_blank": True,
                 "error_title": "Groupe non reconnu",
                 "error_message": "Choisissez un groupe dans la liste. S'il n'y figure pas, laissez la cellule vide "
@@ -583,7 +589,10 @@ class BookBuilder:
             ("add_header_row", str(self.add_header_row + 1)),
             ("add_first_row", str(self.add_first + 1)),
             ("add_last_row", str(self.add_last + 1)),
-            ("add_columns", "A=personne ; B=groupe de ressource (liste MetaGroups.group) ; C=justification (fusion C:I, valeur en C)"),
+            ("add_col_name", "A"),
+            ("add_col_sam", "B (optionnel)"),
+            ("add_col_group", "C (fusion C:E ; liste MetaGroups.group)"),
+            ("add_col_justification", "F (fusion F:I)"),
             ("row_key", "sha1(dossier|sous-dossier|ressource|niveau|SamAccountName|n° d'occurrence)[:16], casse ignorée"),
         ]
         # bloc 1 : clé / valeur (colonnes A:B)
