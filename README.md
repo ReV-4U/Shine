@@ -35,9 +35,32 @@ Avec des arguments (`Shine.exe --input … --output …`), l'exécutable se comp
 décrite ci-dessous. Un fichier `shine.yaml` posé **à côté de `Shine.exe`** (ou de `shine.py`) est chargé
 automatiquement (date limite, contact, `show_dn`, `owners`…) : il suffit d'y mettre ce qui change.
 
-Construire l'exécutable (une seule fois, sur Windows avec Python 3.10+ et internet) : double-cliquer
-`build_exe.bat` → `dist\Shine.exe`, à copier où l'on veut. Un exécutable non signé peut déclencher
-SmartScreen ou l'antivirus de l'entreprise : à faire autoriser par la sécurité, ou à signer.
+### Construire `Shine.exe` (`build_exe.bat`)
+
+À faire une seule fois, sur Windows, avec un accès internet : double-cliquer `build_exe.bat`. Le résultat est
+`dist\Shine.exe`, à copier où l'on veut (le dossier `build\`, `dist\` et `Shine.spec` sont des fichiers
+temporaires, ignorés par Git).
+
+Ce que fait le script, dans l'ordre :
+
+1. Il cherche un Python 3.10+ déjà installé (`py -3`, puis `python`, puis une installation utilisateur précédente).
+2. S'il n'en trouve pas, il télécharge Python 3.12.8 depuis python.org (`amd64` ou `arm64` selon le PC).
+3. Il vérifie la signature de l'installateur (éditeur « Python Software Foundation ») et s'arrête si elle n'est
+   pas valide.
+4. Il installe Python **pour l'utilisateur courant, sans droits administrateur**, et l'ajoute au PATH.
+5. Il installe `XlsxWriter`, `PyYAML` et `PyInstaller`, puis construit `Shine.exe` (sans console, avec
+   `config.yaml` intégré).
+
+En cas d'échec, un message indique quoi faire et la fenêtre reste ouverte.
+
+| Problème | Cause probable | Solution |
+|---|---|---|
+| « téléchargement de Python impossible » | proxy ou pare-feu d'entreprise qui bloque python.org | installer Python 3.10+ à la main (https://www.python.org/downloads/, cocher *Add python.exe to PATH*), puis relancer le `.bat`, qui le détecte |
+| « signature de l'installateur non valide » | fichier corrompu ou altéré | relancer ; si cela persiste, installer Python à la main |
+| échec de `pip install` | proxy qui bloque PyPI (pypi.org) | configurer le proxy pour `pip`, ou faire autoriser PyPI |
+| Windows SmartScreen / antivirus sur `Shine.exe` | exécutable non signé | le faire autoriser par la sécurité, ou le signer avec un certificat de signature de code |
+
+Le script n'a pas été testé sur tous les postes : au premier essai, relever le message affiché en cas de souci.
 
 | Option | Rôle |
 |---|---|
