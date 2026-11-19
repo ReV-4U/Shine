@@ -55,7 +55,7 @@ excel:
 review:
   organisation: ''
   deadline: '[date limite à renseigner]'   # valeur d'attente : Shine.exe demande la date au lancement ; en ligne de commande, utiliser --deadline
-  contact: 'fgeneau@caillau.com'
+  contact: 'fgeneau@caillau.fr'
   period: null               # AAAA-MM ; défaut = mois courant (surcharge : --period)
 
 texts:
