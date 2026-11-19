@@ -43,15 +43,17 @@ automatiquement (date limite, contact, `show_dn`, `owners`…) : il suffit d'y m
 `dist\Shine.exe`, à copier où l'on veut (le dossier `build\`, `dist\` et `Shine.spec` sont des fichiers
 temporaires, ignorés par Git).
 
-Ce que fait le script, dans l'ordre :
+Le script **vérifie d'abord ce qui est déjà installé** et ne télécharge que ce qui manque. Si tout est présent, il
+n'a même pas besoin d'internet. Dans l'ordre :
 
-1. Il cherche un Python 3.10+ déjà installé (`py -3`, puis `python`, puis une installation utilisateur précédente).
-2. S'il n'en trouve pas, il télécharge Python 3.12.8 depuis python.org (`amd64` ou `arm64` selon le PC).
-3. Il vérifie la signature de l'installateur (éditeur « Python Software Foundation ») et s'arrête si elle n'est
-   pas valide.
-4. Il installe Python **pour l'utilisateur courant, sans droits administrateur**, et l'ajoute au PATH.
-5. Il installe `XlsxWriter`, `PyYAML` et `PyInstaller`, puis construit `Shine.exe` (sans console, avec
-   `config.yaml` intégré).
+1. **Python 3.10+** : il cherche une installation existante (`py -3`, puis `python`, puis une installation utilisateur
+   précédente). Seulement s'il n'en trouve aucune, il télécharge Python 3.12.8 depuis python.org (`amd64` ou `arm64`),
+   vérifie la signature de l'installateur (éditeur « Python Software Foundation », arrêt si invalide) et l'installe
+   **pour l'utilisateur courant, sans droits administrateur**, avec ajout au PATH.
+2. **Composants** : il contrôle `XlsxWriter` (≥ 3.2), `PyYAML` (≥ 6) et `PyInstaller` ; il n'installe par `pip` que
+   ceux qui manquent ou sont trop anciens.
+3. **`Shine.exe`** : s'il existe déjà dans `dist\` et qu'aucun fichier `.py` ou `config.yaml` n'est plus récent, il
+   n'est pas reconstruit. `build_exe.bat /force` force la reconstruction.
 
 En cas d'échec, un message indique quoi faire et la fenêtre reste ouverte.
 
