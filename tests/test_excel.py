@@ -162,6 +162,7 @@ def test_protection_without_password_and_unlocked_cells(books):
 
 def test_synthese(books):
     ws = openpyxl.load_workbook(books["E.Test7"])["Synthèse"]
+    assert ws.freeze_panes == "A5"                                    # seules les lignes d'en-tête sont figées, pas la colonne A
     header, rows = table_rows(ws, "Synthese")
     assert header == ["Ressource", "Dossier", "Membres Full", "Membres Read", "Lignes à traiter", "Traitées",
                       "À préciser", "Reste", "Avancement"]

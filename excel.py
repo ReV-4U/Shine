@@ -557,7 +557,7 @@ class BookBuilder:
                 "error_title": "Groupe non reconnu",
                 "error_message": "Choisissez un groupe dans la liste. S'il n'y figure pas, laissez la cellule vide "
                                  "et précisez le groupe dans la justification."})
-        ws.freeze_panes(first, 1)
+        ws.freeze_panes(first, 0)
         ws.set_landscape(); ws.set_paper(9); ws.fit_to_pages(1, 0); ws.repeat_rows(hrow)
         self._protect(ws)
 
