@@ -40,6 +40,10 @@ def validate(cfg: dict) -> None:
     _regex(cfg["input"]["folder_pattern"], "input.folder_pattern")
     if cfg["excel"]["checkbox_mode"] not in ("native", "dropdown"):
         raise ConfigError("excel.checkbox_mode doit valoir 'native' ou 'dropdown'")
+    for key, low in (("add_rows", 1), ("recap_max_removals", 0), ("history_rows", 0)):
+        v = cfg["excel"][key]
+        if not isinstance(v, int) or isinstance(v, bool) or v < low:
+            raise ConfigError(f"excel.{key} doit être un entier ≥ {low}")
     for name, col in cfg["excel"]["colors"].items():
         if not _HEX.match(str(col)):
             raise ConfigError(f"Couleur invalide excel.colors.{name} : {col!r} (attendu #RRGGBB)")
@@ -51,6 +55,8 @@ def validate(cfg: dict) -> None:
         raise ConfigError(f"output.folder_pattern / output.date_format invalide : {e}") from e
     if re.search(r'[\\/:*?"<>|]', pat.replace("{label}", "").replace("{date}", "")):
         raise ConfigError("output.folder_pattern contient un caractère interdit dans un nom de dossier")
+    if cfg["review"].get("classification") not in ("1-Public", "2-Restreint", "3-Confidentiel"):
+        raise ConfigError("review.classification doit valoir '1-Public', '2-Restreint' ou '3-Confidentiel'")
     p = cfg["review"].get("period")
     if p is not None and not re.fullmatch(r"\d{4}-\d{2}", str(p)):
         raise ConfigError("review.period doit être au format AAAA-MM")

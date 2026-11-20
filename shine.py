@@ -17,6 +17,7 @@ import io
 import os
 import sys
 import threading
+import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -46,7 +47,7 @@ def check_deadline(text: str, today: dt.date | None = None) -> str:
 
 
 def process_folder(folder: str, output: str | None = None, deadline: str | None = None) -> tuple[int, str, Path | None]:
-    """Traite `folder` avec la configuration par défaut (+ shine.yaml voisin). Renvoie (code, résumé, dossier de sortie).
+    """Traite `folder` avec la configuration par défaut (+ config.yaml voisin de l'exécutable). Renvoie (code, résumé, dossier de sortie).
 
     Le résumé ne contient que des compteurs et des noms de dossiers/fichiers produits.
     """
@@ -56,8 +57,16 @@ def process_folder(folder: str, output: str | None = None, deadline: str | None 
     try:
         with contextlib.redirect_stdout(buf_out), contextlib.redirect_stderr(buf_err):
             rc = revue_droits.run(args)
+    except OSError as e:
+        return 1, (f"Erreur d'accès aux fichiers ({e.strerror or type(e).__name__}).\n"
+                   "1) Un classeur du même jour est peut-être ouvert dans Excel : fermez-le.\n"
+                   "2) Windows (Accès contrôlé aux dossiers, antivirus, OneDrive) bloque peut-être l'écriture : "
+                   "autorisez Shine.exe ou changez de dossier de sortie."), None
     except Exception as e:  # noqa: BLE001 - la fenêtre doit toujours pouvoir afficher quelque chose
-        return 1, f"Erreur inattendue ({type(e).__name__}). Le traitement a été interrompu.", None
+        tb = traceback.extract_tb(e.__traceback__)
+        where = f", {Path(tb[-1].filename).name}:{tb[-1].lineno}" if tb else ""          # lieu du code, jamais de données
+        return 1, (f"Erreur inattendue ({type(e).__name__}{where}). Le traitement a été interrompu.\n"
+                   "Relancez Shine ; si l'erreur persiste, transmettez ce message tel quel au développeur."), None
     text = (buf_err.getvalue() if rc else buf_out.getvalue()).strip()
     if rc == 0 and "=== Résumé ===" in text:
         text = text.split("=== Résumé ===", 1)[1].strip()

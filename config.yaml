@@ -1,6 +1,8 @@
-# Configuration de revue_droits.py
+# Configuration de Shine (SEUL fichier de configuration).
 # L'outil ne fait que de la MISE EN FORME des exports (aucune analyse des données).
-# Ici : nommage des classeurs, couleurs, textes de l'onglet « Instructions », mode de réponse.
+# Ici : nommage des classeurs, couleurs, textes de l'onglet « Instructions », mode de réponse, contact.
+# Ce fichier est embarqué dans Shine.exe ; une copie posée à côté de Shine.exe (ou de shine.py)
+# le remplace sans reconstruire l'exécutable. >>> Renseignez review.contact plus bas. <<<
 # Les listes données dans un fichier --config REMPLACENT celles de ce fichier ;
 # les dictionnaires sont fusionnés clé par clé.
 
@@ -29,16 +31,18 @@ resources:
   suffix_read: '_Read'
 
 excel:
-  # dropdown : liste Oui / Non / À vérifier (une colonne, 3 états, compatible partout)
+  # dropdown : liste Oui / Non (une colonne, compatible partout)
   # native   : vraies cases à cocher (Excel 365). Une case n'a que 2 états : deux colonnes
   #            « Conserver » / « Retirer » sont créées pour distinguer « non traité » de « à retirer ».
   checkbox_mode: dropdown
   add_rows: 20               # lignes du tableau « Personnes à ajouter » (onglet Synthèse)
+  recap_max_removals: 500    # nombre maximal de retraits affichés dans l'onglet « Récapitulatif » (un avertissement s'affiche au-delà)
+  history_rows: 6            # lignes libres du tableau « Mise à jour » (onglet « En-tête ») sous la ligne écrite par Shine
   show_dn: false             # true : ajoute une colonne « DN (annuaire) » avec le DN tel qu'exporté
   font: Calibri
   font_size: 10
   protect_sheets: true       # protection SANS mot de passe
-  colors:                    # charte (hex)
+  colors:                    # charte (hex) : seules les couleurs utilisées sont listées
     header_bg:   '#1F3864'
     header_font: '#FFFFFF'
     input_header_bg: '#C55A11'   # en-têtes des colonnes à remplir
@@ -46,46 +50,62 @@ excel:
     border:      '#BFBFBF'
     input_border: '#2E75B6'
     input_bg:    '#FFF9E5'       # zones remplissables
-    ok:          '#C6EFCE'       # validé
-    ko:          '#FFC7CE'       # à retirer
-    pending:     '#FFEB9C'       # à vérifier / à préciser
+    cover_head:  '#0B5394'       # onglet « En-tête » : bandeau et titres du tableau « Mise à jour »
+    cover_body:  '#CFE2F3'       # onglet « En-tête » : lignes du tableau
+    cover_line:  '#CCCCCC'       # onglet « En-tête » : filets gris
+    ok:          '#C6EFCE'       # accès autorisé (et « Ajout » dans le récapitulatif)
+    ko:          '#FFC7CE'       # accès à retirer (et « Retrait » dans le récapitulatif)
     todo_even:   '#E9E9E9'       # non traité (zébrage)
     todo_odd:    '#F4F4F4'
 
 review:
-  organisation: ''
-  deadline: '[date limite à renseigner]'   # valeur d'attente : Shine.exe demande la date au lancement ; en ligne de commande, utiliser --deadline
-  contact: '[contact à renseigner]'
+  organisation: ''          # affichée en haut de l'onglet « Instructions » et dans l'« En-tête » (facultatif)
+  deadline: '[date à renseigner]'   # valeur d'attente : Shine.exe demande la date au lancement ; en ligne de commande, utiliser --deadline
+  contact: '[contact à renseigner]'   # >>> À RENSEIGNER : nom, e-mail, téléphone… (affiché dans Instructions et En-tête)
   period: null               # AAAA-MM ; défaut = mois courant (surcharge : --period)
+  version: '1.0'             # version du document (onglet « En-tête »)
+  index: 'A'                 # indice de révision (onglet « En-tête »)
+  classification: '3-Confidentiel'   # '1-Public', '2-Restreint' ou '3-Confidentiel' : mis en évidence dans l'« En-tête »
+  author: ''                 # « Auteur » de la 1re ligne de « Mise à jour » ; vide = « Shine (génération automatique) »
+  footer_notice: ''          # mention en pied de page (rouge) de l'« En-tête », ex. « Document propriété de … » ; vide = aucune
 
 texts:
   instructions_title: "Revue des droits d'accès – {label} – {period}"
   objective: >-
-    Cette revue périodique vérifie que seules les personnes légitimes ont accès aux
+    Cette revue périodique vérifie que seules les personnes autorisées ont accès aux
     ressources de partage de fichiers dont vous êtes responsable. Pour chaque personne
-    listée, indiquez si son accès est justifié.
+    listée, indiquez si son accès est autorisé.
   steps_dropdown:
     - "Ouvrez l'onglet « Synthèse » : chaque ressource à vérifier y figure avec un lien vers son onglet."
-    - "Dans l'onglet d'une ressource, parcourez la liste. Pour chaque ligne, choisissez dans la colonne « Accès légitime ? » : Oui (accès justifié), Non (accès à retirer) ou À vérifier (vous ne savez pas encore)."
+    - "Dans l'onglet d'une ressource, parcourez la liste. Pour chaque ligne, choisissez dans la colonne « Accès autorisé ? » : Oui (accès justifié) ou Non (accès à retirer)."
     - "Laissez la cellule vide tant que vous n'avez pas traité la ligne : vide = non traité."
-    - "Une même personne peut apparaître deux fois (un accès en Modification et un accès en Lecture) : chaque ligne se valide séparément."
+    - "Chaque ligne se valide séparément. Si une même personne apparaît à la fois en Lecture et en Modification, c'est une incohérence à corriger vous-même, de la façon qui vous semble la plus adaptée (par exemple ne conserver que le droit nécessaire et retirer l'autre), en la justifiant dans la colonne « Commentaire »."
     - "Ajoutez un commentaire dans la colonne « Commentaire » si nécessaire."
     - "Il manque quelqu'un ? Renseignez le tableau « Personnes à ajouter » en bas de l'onglet Synthèse : nom, identifiant (facultatif), groupe de ressource (à choisir dans la liste), justification."
-    - "Vous pouvez saisir un commentaire général sur la ressource en haut de son onglet."
+    - "Un commentaire général sur la ressource peut être saisi en bas de son onglet."
+    - "Vérifiez l'onglet « Récapitulatif » : il se remplit tout seul avec les accès à retirer et les personnes à ajouter."
+    - "Terminez par le bloc « Validation et signature » plus bas dans cet onglet : nom, fonction, date, attestation et signature (saisie de votre nom)."
   steps_native:
     - "Ouvrez l'onglet « Synthèse » : chaque ressource à vérifier y figure avec un lien vers son onglet."
-    - "Dans l'onglet d'une ressource, parcourez la liste. Cochez « Conserver » si l'accès est justifié, ou « Retirer » s'il doit être supprimé. Ne cochez jamais les deux."
+    - "Dans l'onglet d'une ressource, parcourez la liste. Cochez « Conserver » si l'accès est autorisé, ou « Retirer » s'il doit être supprimé. Ne cochez jamais les deux."
     - "Laissez les deux cases vides tant que vous n'avez pas traité la ligne : vide = non traité."
-    - "Une même personne peut apparaître deux fois (un accès en Modification et un accès en Lecture) : chaque ligne se valide séparément."
+    - "Chaque ligne se valide séparément. Si une même personne apparaît à la fois en Lecture et en Modification, c'est une incohérence à corriger vous-même, de la façon qui vous semble la plus adaptée (par exemple ne conserver que le droit nécessaire et retirer l'autre), en la justifiant dans la colonne « Commentaire »."
     - "Ajoutez un commentaire dans la colonne « Commentaire » si nécessaire."
     - "Il manque quelqu'un ? Renseignez le tableau « Personnes à ajouter » en bas de l'onglet Synthèse : nom, identifiant (facultatif), groupe de ressource (à choisir dans la liste), justification."
-    - "Vous pouvez saisir un commentaire général sur la ressource en haut de son onglet."
-  return_line: "Enregistrez le fichier puis renvoyez-le à {contact} avant le {deadline}. Ne renommez pas les onglets et ne modifiez pas la structure du classeur."
+    - "Un commentaire général sur la ressource peut être saisi en bas de son onglet."
+    - "Vérifiez l'onglet « Récapitulatif » : il se remplit tout seul avec les accès à retirer et les personnes à ajouter."
+    - "Terminez par le bloc « Validation et signature » plus bas dans cet onglet : nom, fonction, date, attestation et signature (saisie de votre nom)."
+  return_line: "Veuillez traiter la revue des droits NTFS avant le {deadline}. Une fois la revue terminée, signez dans le bloc « Validation et signature » de cet onglet. Ne renommez pas les onglets et ne modifiez pas la structure du classeur."
   protection_note: "Le classeur est protégé (sans mot de passe) : seules les zones à remplir sont modifiables. Les filtres restent utilisables ; pour trier, préférez les filtres (Excel interdit le tri dès qu'une cellule de la plage est verrouillée)."
+  confidentiality_note: "Ce classeur contient des noms et identifiants de personnes : ne le transmettez qu'aux personnes concernées par la revue."
+  signature_hint: >-
+    La saisie de votre nom, avec la date, vaut signature électronique simple (traçabilité interne).
+    Pour une signature numérique certifiée, faites-le en tout dernier : Fichier › Informations ›
+    Protéger le classeur › Ajouter une signature numérique (certificat requis ; toute modification
+    ultérieure invalide la signature).
   legend:
-    ok: "Accès validé"
+    ok: "Accès autorisé"
     ko: "Accès à retirer"
-    pending: "À vérifier / à préciser"
     todo: "Non traité"
     input: "Zone à remplir"
 

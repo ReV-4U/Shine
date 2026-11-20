@@ -3,13 +3,13 @@
 """Génération des classeurs Excel (XlsxWriter).
 
 Structure d'un classeur :
-  Instructions | Synthèse | <une feuille par ressource> | _meta (masqué)
+  En-tête | Instructions | Synthèse | Récapitulatif | <une feuille par ressource> | _calc, _meta (masqués)
 
 Une ligne de feuille = une ligne d'un CSV (aucune fusion Full/Read, aucun dédoublonnage).
 
 Contrat de relecture (phase 2, commande `ingest`) :
-  * jamais de cellule fusionnée dans les zones de données (seul le commentaire général, en
-    en-tête de feuille, est fusionné) ;
+  * jamais de cellule fusionnée dans les zones de données (seul le commentaire général, sous le
+    tableau de chaque feuille de ressource, est fusionné) ;
   * chaque ligne porte sa clé stable dans une colonne masquée « Clé » : le tri et le filtre de
     l'utilisateur ne cassent donc pas la correspondance ;
   * l'onglet _meta décrit, par feuille, où se trouvent le tableau, le bloc d'ajout et le
@@ -28,18 +28,18 @@ from xlsxwriter.utility import xl_col_to_name, xl_rowcol_to_cell
 
 from model import FULL, READ, Book, ResourceData, ScopeData
 
-SCHEMA_VERSION = 3
-TOOL_VERSION = "2.1.0"
+SCHEMA_VERSION = 4
+TOOL_VERSION = "2.2.0"
 
 LEVEL_LABELS = {FULL: "Modification", READ: "Lecture"}
 ADD_COLS = ("Nom", "Identifiant (optionnel)", "Groupe de ressource", "Justification")   # tableau « Personnes à ajouter » (Synthèse)
 ADD_GROUP_SPAN = (2, 4)      # colonnes C:E fusionnées par ligne (liste « Groupe de ressource »), valeur lue en C
-ADD_JUSTIF_SPAN = (5, 8)     # colonnes F:I fusionnées par ligne, valeur lue en F
+ADD_JUSTIF_SPAN = (5, 7)     # colonnes F:H fusionnées par ligne, valeur lue en F
 # colonnes de l'onglet _meta (contrat phase 2) ; les blocs sont placés côte à côte
 META_SHEETS = ["sheet", "folder", "subpath", "resource", "group_full", "group_read", "header_row", "first_data_row",
                "last_data_row", "n_rows", "comment_cell", "decision_cols", "key_col", "data_hash"]
 META_ROWS = ["sheet", "key", "sam", "level", "initial_row"]
-META_GROUPS = ["group", "sheet", "folder", "subpath", "resource", "level", "file"]
+META_GROUPS = ["group", "sheet", "folder", "subpath", "resource", "level", "file", "owner"]
 META_C0 = 3
 META_C1 = META_C0 + len(META_SHEETS) + 1
 META_C2 = META_C1 + len(META_ROWS) + 1          # colonne de la liste « group » (source de la liste déroulante)
@@ -51,11 +51,18 @@ def syn_layout(n_resources: int) -> tuple[int, int, int, int]:
     first = SYN_HEAD_ROW + 1
     last = SYN_HEAD_ROW + max(n_resources, 1)
     return first, last, last + 1, last + 4
-DROPDOWN_VALUES = ["Oui", "Non", "À vérifier"]
+DROPDOWN_VALUES = ["Oui", "Non"]
+SHEET_COVER, SHEET_INSTR, SHEET_SYN, SHEET_RECAP, SHEET_CALC = "En-tête", "Instructions", "Synthèse", "Récapitulatif", "_calc"
+RECAP_HEAD_ROW = 6          # en-tête (0-based) du tableau de l'onglet Récapitulatif
+RECAP_COLS = ("Action", "Propriétaire du groupe", "Nom", "Identifiant", "Droit souhaité", "Justification", "Ressource")
+REMOVAL_RIGHT = "Aucun (retrait)"
+CLASSIFICATIONS = ("1-Public", "2-Restreint", "3-Confidentiel")          # niveaux de l'En-tête (review.classification)
+UPDATE_COLS = ("Auteur", "Date", "Version", "Nature de la modification", "Approbation", "Validation", "Status")
 NO_MEMBER = "Aucun membre"
 
 _BAD_SHEET = re.compile(r"[\[\]:*?/\\]")
-_RESERVED = {"instructions", "synthèse", "synthese", "_meta", "history"}
+_RESERVED = {"instructions", "synthèse", "synthese", "_meta", "_calc", "history", "en-tête", "en-tete", "entête",
+             "récapitulatif", "recapitulatif"}
 _HEADER_ROW = 5          # ligne (0-based) de l'en-tête du tableau dans une feuille de ressource
 
 
@@ -183,8 +190,10 @@ class BookBuilder:
         wb.set_properties({"title": f"Revue des droits – {self.book.label} – {self.period}",
                            "subject": "Revue périodique des droits d'accès", "created": self.now,
                            "comments": f"schema {SCHEMA_VERSION}"})
-        ws_instr = wb.add_worksheet("Instructions")
-        ws_syn = wb.add_worksheet("Synthèse")
+        ws_cover = wb.add_worksheet(SHEET_COVER)
+        ws_instr = wb.add_worksheet(SHEET_INSTR)
+        ws_syn = wb.add_worksheet(SHEET_SYN)
+        ws_recap = wb.add_worksheet(SHEET_RECAP)
 
         # un nom de ressource présent dans plusieurs dossiers du classeur est suffixé par le code du dossier
         counts: dict[str, int] = {}
@@ -204,12 +213,22 @@ class BookBuilder:
         for info in infos:
             self._resource_sheet(info)
 
-        self._instructions(ws_instr)
-        self._synthese(ws_syn, infos)
+        # capacité du récapitulatif : toutes les lignes pourraient être à retirer, dans la limite de la configuration
+        self.n_rem = sum(i.n_rows for i in infos)
+        self.cap_rem = min(self.n_rem, self.cfg["excel"]["recap_max_removals"])
+        self.n_add = self.cfg["excel"]["add_rows"]
+
+        self._synthese(ws_syn, infos)          # fixe la position du tableau « Personnes à ajouter »
+        self._recap(ws_recap)
+        self._instructions(ws_instr)           # fixe la position du bloc de signature (lue par l'En-tête)
+        self._cover(ws_cover, infos)
+        ws_calc = wb.add_worksheet(SHEET_CALC)
+        self._calc_sheet(ws_calc, infos)
         ws_meta = wb.add_worksheet("_meta")
         self._meta_sheet(ws_meta, infos)
+        ws_calc.hide()
         ws_meta.hide()
-        ws_instr.activate()
+        ws_cover.activate()
         wb.close()
 
         self.report.sheets = infos
@@ -236,7 +255,8 @@ class BookBuilder:
                     label, k = f"{base} ({k})", k + 1
                 seen.add(label.casefold())
                 out.append({"group": label, "sheet": info.name, "folder": info.scope.name, "subpath": info.res.subpath,
-                            "resource": info.res.name, "level": lvl, "file": g.rel_path.rsplit("/", 1)[-1]})
+                            "resource": info.res.name, "level": lvl, "file": g.rel_path.rsplit("/", 1)[-1],
+                            "owner": info.scope.label})
         return out
 
     def _data_hash(self) -> str:
@@ -263,7 +283,7 @@ class BookBuilder:
         c_right = len(cols)
         cols.append("Droit actuel")
         c_dec = len(cols)
-        cols += ["Conserver", "Retirer"] if native else ["Accès légitime ?"]
+        cols += ["Conserver", "Retirer"] if native else ["Accès autorisé ?"]
         dec_cols = (c_dec, c_dec + 1) if native else (c_dec,)
         c_com = len(cols)
         cols += ["Commentaire", "Clé"]
@@ -311,13 +331,8 @@ class BookBuilder:
         ws.write_datetime(3, 1, dt.datetime.combine(scope.export_date, dt.time()),
                           F(num_format="dd/mm/yyyy", align="left"))
 
-        # commentaire général (zone de saisie ; seule fusion du classeur, hors zone de données)
-        ws.write_string(4, 0, "Commentaire général", lab)
         input_fmt = F(locked=False, bg_color=c["input_bg"], border=1, border_color=c["input_border"],
                       text_wrap=True, valign="top")
-        ws.merge_range(4, 1, 4, c_com, "", input_fmt)
-        ws.set_row(4, 48)
-        info.comment_cell = xl_rowcol_to_cell(4, 1)
 
         # ---- tableau
         sn = _sq(info.name)
@@ -360,26 +375,32 @@ class BookBuilder:
             ws.write_blank(r, c_com, None, input_fmt)
             ws.write_string(r, c_key, p.key, key_fmt)
 
-        # ---- validation : liste Oui / Non / À vérifier
+        # ---- commentaire général sous le tableau (zone de saisie ; seule fusion de la feuille, hors zone de données)
+        cr = last + 2
+        ws.write_string(cr, 0, "Commentaire général", F(bold=True, font_color=c["title"], valign="top"))
+        ws.merge_range(cr, 1, cr, c_com, "", input_fmt)
+        ws.set_row(cr, 60)
+        info.comment_cell = xl_rowcol_to_cell(cr, 1)
+
+        # ---- validation : liste Oui / Non
         if not native and n:
             ws.data_validation(first, c_dec, last, c_dec, {
                 "validate": "list", "source": DROPDOWN_VALUES, "ignore_blank": True,
-                "input_title": "Accès légitime ?", "input_message": "Oui = justifié · Non = à retirer · À vérifier",
-                "error_title": "Valeur non autorisée", "error_message": "Choisissez Oui, Non ou À vérifier dans la liste.",
+                "input_title": "Accès autorisé ?", "input_message": "Oui = accès justifié · Non = accès à retirer",
+                "error_title": "Valeur non autorisée", "error_message": "Choisissez Oui ou Non dans la liste.",
                 "error_type": "stop"})
 
-        # ---- mise en forme conditionnelle (ordre = priorité) : vert / rouge / jaune / gris zébré
+        # ---- mise en forme conditionnelle (ordre = priorité) : vert / rouge / gris zébré
         if n:
             R = first + 1  # numéro de ligne Excel de la première ligne de données
             dx = self.F.dxf
             d1 = xl_col_to_name(dec_cols[0])
             if native:
                 d2 = xl_col_to_name(dec_cols[1])
-                ok, ko, pend = (f"=AND(${d1}{R}=TRUE,${d2}{R}<>TRUE)", f"=AND(${d2}{R}=TRUE,${d1}{R}<>TRUE)",
-                                f"=AND(${d1}{R}=TRUE,${d2}{R}=TRUE)")
+                ok, ko = f"=AND(${d1}{R}=TRUE,${d2}{R}<>TRUE)", f"=AND(${d2}{R}=TRUE,${d1}{R}<>TRUE)"
             else:
-                ok, ko, pend = f'=${d1}{R}="Oui"', f'=${d1}{R}="Non"', f'=${d1}{R}="À vérifier"'
-            rules = [(ok, dx(bg_color=c["ok"])), (ko, dx(bg_color=c["ko"])), (pend, dx(bg_color=c["pending"])),
+                ok, ko = f'=${d1}{R}="Oui"', f'=${d1}{R}="Non"'
+            rules = [(ok, dx(bg_color=c["ok"])), (ko, dx(bg_color=c["ko"])),
                      ("=MOD(ROW(),2)=0", dx(bg_color=c["todo_even"])), ("=MOD(ROW(),2)=1", dx(bg_color=c["todo_odd"]))]
             for crit, fmt in rules:
                 ws.conditional_format(first, 0, last, dec_cols[-1], {"type": "formula", "criteria": crit,
@@ -395,6 +416,7 @@ class BookBuilder:
                              F(bold=True, font_color=c["title"], align="left"), f"Progression : 0 / {n}")
         ws.write_url(1, c_com, "internal:'Synthèse'!A1", link, "← Retour à la synthèse")
         ws.write_url(2, c_com, f"internal:'Synthèse'!A{self.add_title + 1}", link, "↓ Personnes à ajouter (onglet Synthèse)")
+        ws.write_url(3, c_com, f"internal:'{sn}'!A{cr + 1}", link, "↓ Commentaire général (sous le tableau)")
 
         # ---- volets, impression, protection
         ws.freeze_panes(first, 0)
@@ -402,7 +424,7 @@ class BookBuilder:
         ws.set_paper(9)
         ws.fit_to_pages(1, 0)
         ws.repeat_rows(_HEADER_ROW)
-        ws.print_area(0, 0, last, c_com)
+        ws.print_area(0, 0, cr, c_com)
         ws.set_margins(0.4, 0.4, 0.6, 0.6)
         ws.set_footer("&L&8&A&R&8Page &P / &N")
         self._protect(ws)
@@ -416,18 +438,20 @@ class BookBuilder:
             return f"=SUMPRODUCT(--(({rng(a)}=TRUE)+({rng(b)}=TRUE)=1))"
         return f'=COUNTIF({rng(dec_cols[0])},"Oui")+COUNTIF({rng(dec_cols[0])},"Non")'
 
-    # ------------------------------------------------------------------ Instructions
+    # ------------------------------------------------------------------ Instructions (consignes + bloc de signature)
     def _instructions(self, ws):
         F, c, t = self.F, self.c, self.cfg["texts"]
         rv = self.cfg["review"]
         ws.hide_gridlines(2)
         ws.set_column(0, 0, 6)
-        ws.set_column(1, 1, 110)
+        ws.set_column(1, 1, 34)
+        ws.set_column(2, 2, 76)
         wrap = F(text_wrap=True, valign="top")
         w = 110
+        bd = {"border": 1, "border_color": c["border"]}
 
         def put(r, text, fmt=wrap):
-            ws.write_string(r, 1, safe(text), fmt)
+            ws.merge_range(r, 1, r, 2, safe(text), fmt)
             ws.set_row(r, max(16, 14 * math.ceil(len(text) / (w * 1.0)) + 3))
 
         values = {"label": self.book.label, "period": self.period, "contact": rv["contact"],
@@ -450,10 +474,49 @@ class BookBuilder:
         r += 1
         ws.write_string(r, 1, "Date limite et contact", F(bold=True, font_color=c["title"], font_size=12)); r += 1
         put(r, t["return_line"].format(**values), F(text_wrap=True, valign="top", bold=True)); r += 1
-        ws.write_string(r, 1, f"Date limite : {values['deadline']}   ·   Contact : {values['contact']}", F()); r += 2
+        ws.write_string(r, 1, f"Contact : {values['contact']}", F()); r += 2
+
+        # ---- validation par le propriétaire du groupe (signature électronique simple)
+        ws.write_string(r, 1, "Validation et signature", F(bold=True, font_color=c["title"], font_size=12)); r += 1
+        fields = ["Nom et prénom", "Fonction", "Date de validation",
+                  "Je certifie avoir examiné toutes les lignes et le récapitulatif", "Signature (saisissez votre nom)"]
+        lab = F(bold=True, valign="vcenter", text_wrap=True, bg_color="#F2F2F2", **bd)
+        inp = F(locked=False, bg_color=c["input_bg"], border=1, border_color=c["input_border"], valign="vcenter", text_wrap=True)
+        date_f = F(locked=False, bg_color=c["input_bg"], border=1, border_color=c["input_border"], num_format="dd/mm/yyyy",
+                   align="left", valign="vcenter")
+        sig_f = F(locked=False, bg_color=c["input_bg"], border=1, border_color=c["input_border"], italic=True,
+                  font_size=self.cfg["excel"]["font_size"] + 4, valign="vcenter")
+        top = r
+        for i, k in enumerate(fields):
+            ws.write_string(top + i, 1, k, lab)
+            ws.write_blank(top + i, 2, None, date_f if i == 2 else sig_f if i == 4 else inp)
+        ws.set_row(top + 3, 30)
+        ws.set_row(top + 4, 36)
+        status_row = top + len(fields)
+        self.sig = {"name": f"C{top + 1}", "role": f"C{top + 2}", "date": f"C{top + 3}", "attest": f"C{top + 4}",
+                    "signature": f"C{top + 5}", "status": f"C{status_row + 1}"}
+        s_ = self.sig
+        ws.data_validation(top + 2, 2, top + 2, 2, {
+            "validate": "date", "criteria": "between", "minimum": dt.date(2020, 1, 1), "maximum": dt.date(2100, 12, 31),
+            "ignore_blank": True, "error_title": "Date invalide", "error_message": "Saisissez une date (JJ/MM/AAAA)."})
+        ws.data_validation(top + 3, 2, top + 3, 2, {
+            "validate": "list", "source": ["Oui", "Non"], "ignore_blank": True,
+            "error_title": "Valeur non autorisée", "error_message": "Choisissez Oui ou Non dans la liste."})
+        ws.write_string(status_row, 1, "Statut de la validation", F(bold=True, valign="vcenter", bg_color="#F2F2F2", **bd))
+        stat = F(bold=True, valign="vcenter", **bd)
+        ws.write_formula(status_row, 2,
+                         f'=IF(AND(LEN({s_["name"]})>0,LEN({s_["signature"]})>0,ISNUMBER({s_["date"]}),{s_["attest"]}="Oui"),"Signé","Non signé")',
+                         stat, "Non signé")
+        for text, color in (('"Signé"', c["ok"]), ('"Non signé"', c["todo_even"])):
+            ws.conditional_format(status_row, 2, status_row, 2, {"type": "cell", "criteria": "==", "value": text,
+                                                                  "format": self.F.dxf(bg_color=color)})
+        r = status_row + 1
+        put(r, " ".join(t["signature_hint"].split()), F(italic=True, font_color="#595959", text_wrap=True, valign="top"))
+        r += 2
+
         ws.write_string(r, 1, "Légende des couleurs", F(bold=True, font_color=c["title"], font_size=12)); r += 1
         leg = t["legend"]
-        items = [("ok", c["ok"]), ("ko", c["ko"]), ("pending", c["pending"]), ("todo", c["todo_even"]), ("input", c["input_bg"])]
+        items = [("ok", c["ok"]), ("ko", c["ko"]), ("todo", c["todo_even"]), ("input", c["input_bg"])]
         for key, color in items:
             extra = {"border_color": c["input_border"]} if key == "input" else {"border_color": c["border"]}
             ws.write_blank(r, 0, None, F(bg_color=color, border=1, **extra))
@@ -464,15 +527,97 @@ class BookBuilder:
         ws.set_portrait(); ws.set_paper(9); ws.fit_to_pages(1, 0); ws.set_margins(0.5, 0.5, 0.6, 0.6)
         self._protect(ws)
 
+    # ------------------------------------------------------------------ En-tête (page de garde du document)
+    def _cover(self, ws, infos: list[SheetInfo]):
+        """Page de garde : version / indice / date, titre, classification, tableau « Mise à jour » (historique)."""
+        F, c, t, rv = self.F, self.c, self.cfg["texts"], self.cfg["review"]
+        ws.hide_gridlines(2)
+        for col, wd in enumerate((3, 26, 14, 16, 46, 16, 16, 14)):
+            ws.set_column(col, col, wd)
+        white = {"border": 5, "border_color": "#FFFFFF"}                     # filets blancs épais entre les cellules
+        scopes = self.book.scopes
+        exports = " ; ".join(sorted({s.export_date.strftime("%d/%m/%Y") for s in scopes}))
+        author = (rv.get("author") or "").strip() or "Shine (génération automatique)"
+        today = self.now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        # ---- haut de page : version, indice, date (à droite) ; titre au centre ; emplacement du logo en B2
+        side_l = F(align="center", valign="vcenter")
+        side_r = F(align="center", valign="vcenter")
+        ws.write_string(0, 6, "Version", side_l); ws.write_string(0, 7, safe(str(rv.get("version") or "")), side_r)
+        ws.write_string(1, 6, "Indice", F(align="center", valign="vcenter", bottom=2, bottom_color=c["cover_line"]))
+        ws.write_string(1, 7, safe(str(rv.get("index") or "")), side_r)
+        ws.write_string(2, 6, "Date", side_l)
+        ws.write_datetime(2, 7, today, F(num_format="dd/mm/yyyy", align="center", valign="vcenter"))
+        ws.set_row(1, 30)
+        ws.merge_range(1, 2, 1, 5, "Revue des droits NTFS",
+                       F(bold=True, font_size=18, align="center", valign="vcenter", bottom=2, bottom_color=c["cover_line"]))
+        ws.merge_range(2, 2, 2, 5, f"{self.book.label} – {self.period}", F(italic=True, align="center", font_color="#595959"))
+
+        # ---- classification du document : le niveau retenu est mis en évidence
+        ws.merge_range(4, 1, 4, 3, "Classification du document", F(bold=True, font_size=14, valign="vcenter"))
+        ws.set_row(4, 22)
+        chosen = str(rv.get("classification") or "")
+        for j, name in enumerate(CLASSIFICATIONS):
+            on = name == chosen
+            ws.write_string(5, 1 + j, name, F(align="center", valign="vcenter", text_wrap=True, bold=on,
+                                              font_color="#FFFFFF" if on else "#000000",
+                                              bg_color=c["cover_head"] if on else "#FFFFFF",
+                                              border=1, border_color=c["cover_line"]))
+        ws.set_row(5, 28)
+        ws.merge_range(6, 1, 6, 7, safe(t["confidentiality_note"]), F(italic=True, font_color="#595959", font_size=9,
+                                                                       text_wrap=True, valign="top"))
+        ws.set_row(6, 18)
+
+        # ---- tableau « Mise à jour » : 1re ligne écrite par Shine, lignes libres pour la suite (qui, quand, quoi, validation)
+        ws.merge_range(8, 1, 8, 7, "Mise à jour", F(bold=True, font_size=14, font_color="#FFFFFF", bg_color=c["cover_head"],
+                                                    align="center", valign="vcenter", **white))
+        ws.set_row(8, 22)
+        head = F(bold=True, font_size=12, font_color="#FFFFFF", bg_color=c["cover_head"], align="center", valign="vcenter",
+                 text_wrap=True, **white)
+        for j, name in enumerate(UPDATE_COLS):
+            ws.write_string(9, 1 + j, name, head)
+        ws.set_row(9, 32)
+        body = F(bg_color=c["cover_body"], font_size=10, valign="vcenter", text_wrap=True, **white)
+        body_date = F(bg_color=c["cover_body"], font_size=10, valign="vcenter", num_format="dd/mm/yyyy", align="center", **white)
+        free = F(bg_color=c["cover_body"], font_size=10, valign="vcenter", text_wrap=True, locked=False, **white)
+        free_date = F(bg_color=c["cover_body"], font_size=10, valign="vcenter", num_format="dd/mm/yyyy", align="center",
+                      locked=False, **white)
+        r1 = 10
+        ws.write_string(r1, 1, safe(author), body)
+        ws.write_datetime(r1, 2, today, body_date)
+        ws.write_string(r1, 3, safe(str(rv.get("version") or "")), F(bg_color=c["cover_body"], font_size=10, valign="vcenter",
+                                                                      align="center", **white))
+        ws.write_string(r1, 4, f"Création du classeur à partir des exports du {exports} (Shine v{TOOL_VERSION} : mise en forme, sans analyse).", body)
+        ws.write_blank(r1, 5, None, free)                                              # approbation : à saisir
+        ws.write_formula(r1, 6, f"='{SHEET_INSTR}'!${self.sig['status'][0]}${self.sig['status'][1:]}", body, "Non signé")  # validation = signature
+        ws.write_string(r1, 7, "Émis", body)
+        ws.set_row(r1, 30)
+        n_free = self.cfg["excel"]["history_rows"]
+        for i in range(n_free):
+            rr = r1 + 1 + i
+            for j in range(7):
+                ws.write_blank(rr, 1 + j, None, free_date if j == 1 else free)
+            ws.set_row(rr, 20)
+        if n_free:
+            ws.data_validation(r1 + 1, 2, r1 + n_free, 2, {
+                "validate": "date", "criteria": "between", "minimum": dt.date(2020, 1, 1), "maximum": dt.date(2100, 12, 31),
+                "ignore_blank": True, "error_title": "Date invalide", "error_message": "Saisissez une date (JJ/MM/AAAA)."})
+        self.hist_first, self.hist_last = r1 + 1, r1 + n_free
+
+        notice = str(rv.get("footer_notice") or "").strip()
+        ws.set_portrait(); ws.set_paper(9); ws.fit_to_pages(1, 0); ws.set_margins(0.7, 0.7, 0.75, 0.75)
+        ws.set_footer((f"&C&8&KFF0000 {notice.replace('&', '&&')} " if notice else "") + "&L&8&A&R&8Page &P / &N")
+        self._protect(ws)
+
     # ------------------------------------------------------------------ Synthèse
     def _synthese(self, ws, infos: list[SheetInfo]):
         F, c = self.F, self.c
         ws.hide_gridlines(2)
         heads = ["Ressource", "Dossier", "Membres Full", "Membres Read", "Lignes à traiter",
-                 "Traitées", "À préciser", "Reste", "Avancement"]
+                 "Traitées", "Reste", "Avancement"]
         widths = [max([len(i.res.name) for i in infos] + [24]) + 4,
                   max([len(i.scope.name) for i in infos] + [len(g["group"]) for g in self.groups] + [22]) + 2,
-                  13, 13, 14, 11, 11, 10, 12]
+                  13, 13, 14, 11, 10, 12]
         for j, wd in enumerate(widths):
             ws.set_column(j, j, min(wd, 48))
         ws.write_string(0, 0, f"Synthèse – {self.book.label} – {self.period}", F(bold=True, font_size=15, font_color=c["title"]))
@@ -508,17 +653,11 @@ class BookBuilder:
             rng = lambda col, s=sn, a=f0, b=l0: f"'{s}'!${xl_col_to_name(col)}${a}:${xl_col_to_name(col)}${b}"  # noqa: E731
             if info.n_rows == 0:
                 ws.write_number(r, 5, 0, num)
-                ws.write_number(r, 6, 0, num)
             else:
                 ws.write_formula(r, 5, self._treated_formula(rng, info.dec_cols), num, 0)
-                if self.native:
-                    a, b = info.dec_cols
-                    ws.write_formula(r, 6, f"=SUMPRODUCT(--(({rng(a)}=TRUE)+({rng(b)}=TRUE)=2))", num, 0)
-                else:
-                    ws.write_formula(r, 6, f'=COUNTIF({rng(info.dec_cols[0])},"À vérifier")', num, 0)
             R = r + 1
-            ws.write_formula(r, 7, f"=E{R}-F{R}-G{R}", num, info.n_rows)
-            ws.write_formula(r, 8, f'=IF(E{R}=0,"—",F{R}/E{R})', pct, 0 if info.n_rows else "—")
+            ws.write_formula(r, 6, f"=E{R}-F{R}", num, info.n_rows)
+            ws.write_formula(r, 7, f'=IF(E{R}=0,"—",F{R}/E{R})', pct, 0 if info.n_rows else "—")
         if not infos:
             ws.write_string(first, 0, "Aucune ressource", F(italic=True, **bd))
         # ligne de total : cellules ordinaires juste sous le tableau (SUBTOTAL respecte les filtres)
@@ -528,18 +667,19 @@ class BookBuilder:
         ws.write_string(tr, 0, "Total", F(bold=True, **tb))
         ws.write_blank(tr, 1, None, tot)
         cached = {2: sum(i.res.count(FULL) or 0 for i in infos), 3: sum(i.res.count(READ) or 0 for i in infos),
-                  4: total_lines, 5: 0, 6: 0, 7: total_lines}
-        for j in range(2, 8):
+                  4: total_lines, 5: 0, 6: total_lines}
+        for j in range(2, 7):
             col = xl_col_to_name(j)
             ws.write_formula(tr, j, f"=SUBTOTAL(109,{col}{first + 1}:{col}{last + 1})", tot, cached[j])
-        ws.write_formula(tr, 8, f'=IF(E{TR}=0,"—",F{TR}/E{TR})', F(num_format="0%", align="center", bold=True, **tb),
+        ws.write_formula(tr, 7, f'=IF(E{TR}=0,"—",F{TR}/E{TR})', F(num_format="0%", align="center", bold=True, **tb),
                          0 if total_lines else "—")
 
         # ---- tableau « Personnes à ajouter » (sous le total) : une ligne = une personne et le groupe (fichier CSV) visé
         at = self.add_title
         ws.write_string(at, 0, "Personnes à ajouter", F(bold=True, font_size=self.cfg["excel"]["font_size"] + 2, font_color=c["title"]))
         ws.write_string(at + 1, 0, "Il manque quelqu'un ? Indiquez son nom (et son identifiant s'il est connu), le groupe de ressource "
-                                   "concerné (à choisir dans la liste) et la justification.", F(italic=True, font_color="#595959"))
+                                   "concerné (à choisir dans la liste) et la justification. Le droit (Lecture ou Modification) "
+                                   "se déduit du groupe choisi.", F(italic=True, font_color="#595959"))
         h = at + 2
         (g0, g1), (j0, j1) = ADD_GROUP_SPAN, ADD_JUSTIF_SPAN
         assert j1 == len(heads) - 1
@@ -547,7 +687,7 @@ class BookBuilder:
         ws.write_string(h, 0, ADD_COLS[0], self._hdr(input_col=True))
         ws.write_string(h, 1, ADD_COLS[1], self._hdr(input_col=True))
         ws.merge_range(h, g0, h, g1, ADD_COLS[2], self._hdr(input_col=True))           # groupe : C:E (valeur lue en C)
-        ws.merge_range(h, j0, h, j1, ADD_COLS[3], self._hdr(input_col=True))           # justification : F:I (valeur lue en F)
+        ws.merge_range(h, j0, h, j1, ADD_COLS[3], self._hdr(input_col=True))           # justification : F:H (valeur lue en F)
         na = self.cfg["excel"]["add_rows"]
         self.add_first, self.add_last = h + 1, h + na
         add_fmt = F(locked=False, bg_color=c["input_bg"], border=1, border_color=c["input_border"], text_wrap=True)
@@ -567,6 +707,145 @@ class BookBuilder:
         ws.set_landscape(); ws.set_paper(9); ws.fit_to_pages(1, 0); ws.repeat_rows(hrow)
         self._protect(ws)
 
+    # ------------------------------------------------------------------ Récapitulatif (alimenté par formules via _calc)
+    def _recap(self, ws):
+        F, c = self.F, self.c
+        ws.hide_gridlines(2)
+        for col, wd in enumerate((16, 24, 30, 18, 18, 50, 34)):
+            ws.set_column(col, col, wd)
+        ws.set_column(7, 7, 8, None, {"hidden": True})               # H : n° de ligne dans _calc (aide au calcul)
+        bd = {"border": 1, "border_color": c["border"]}
+        ws.write_string(0, 0, f"Récapitulatif des demandes – {self.book.label} – {self.period}",
+                        F(bold=True, font_size=15, font_color=c["title"]))
+        ws.set_row(0, 26)
+        ws.write_string(1, 0, "Tableau calculé automatiquement (ne pas modifier) : accès à retirer (lignes « Non » / « Retirer ») et "
+                              "personnes à ajouter (tableau de l'onglet Synthèse). Il se met à jour à mesure que vous répondez.",
+                        F(italic=True, font_color="#595959"))
+        na, nr = self.n_add, self.n_rem
+        lab = F(bold=True, font_color=c["title"])
+        cnt = F(bold=True, align="left")
+        ws.write_string(2, 0, "Ajouts demandés", lab)
+        ws.write_formula(2, 1, f"='{SHEET_CALC}'!$I${na + 1}", cnt, 0)
+        ws.write_string(3, 0, "Retraits demandés", lab)
+        if nr:
+            ws.write_formula(3, 1, f"='{SHEET_CALC}'!$B${nr + 1}", cnt, 0)
+        else:
+            ws.write_number(3, 1, 0, cnt)
+        cap = na + self.cap_rem
+        if self.cap_rem < nr:
+            ws.write_formula(4, 0, f'=IF($B$3+$B$4>{cap},"⚠ "&($B$3+$B$4)&" demandes au total : seules les {cap} premières sont '
+                                   f'affichées ici (paramètre excel.recap_max_removals).","")', F(bold=True, font_color="#C00000"), "")
+
+        h, first = RECAP_HEAD_ROW, RECAP_HEAD_ROW + 1
+        last = first + cap - 1
+        self.recap_header_row, self.recap_first, self.recap_last = h, first, last
+        ws.add_table(h, 0, last, len(RECAP_COLS) - 1, {
+            "name": self._table_name("Recap"), "style": None, "autofilter": True,
+            "columns": [{"header": k, "header_format": self._hdr()} for k in RECAP_COLS]})
+        ws.set_row(h, 30)
+        ws.write_string(h, 7, "n° _calc", F(font_color="#7F7F7F"))
+        body = F(text_wrap=True, valign="top")
+        calc = SHEET_CALC
+        add_rng = lambda col: f"'{calc}'!${col}$2:${col}${na + 1}"           # noqa: E731
+        rem_rng = lambda col: f"'{calc}'!${col}$2:${col}${nr + 1}"           # noqa: E731
+        for r in range(first, last + 1):
+            R = r + 1
+            p = f"ROWS(H${first + 1}:H{R})"
+            m_add = f"MATCH({p},{add_rng('I')},0)"
+            m_rem = f"MATCH({p}-$B$3,{rem_rng('B')},0)"
+            helper = f'=IF({p}<=$B$3,{m_add},IF({p}-$B$3<=$B$4,{m_rem},""))' if nr else f'=IF({p}<=$B$3,{m_add},"")'
+            ws.write_formula(r, 7, helper, F(font_color="#7F7F7F"), "")
+            ws.write_formula(r, 0, f'=IF($H{R}="","",IF({p}<=$B$3,"Ajout","Retrait"))', body, "")
+
+            def pick(col, add_col, rem_col=None, const=None):
+                a = f"INDEX({add_rng(add_col)},$H{R})"
+                if not nr:
+                    rem = '""'
+                elif const is not None:
+                    rem = f'"{const}"'
+                else:
+                    rem = f"INDEX({rem_rng(rem_col)},$H{R})"
+                ws.write_formula(r, col, f'=IF($H{R}="","",IF($A{R}="Ajout",{a},{rem}))', body, "")
+            pick(1, "O", "G")
+            pick(2, "J", "C")
+            pick(3, "K", "D")
+            pick(4, "N", const=REMOVAL_RIGHT)
+            pick(5, "M", "E")
+            pick(6, "L", "F")
+        # bordures et couleurs seulement sur les lignes remplies (une seule règle appliquée par cellule : compatible Excel et LibreOffice)
+        edge = {"border": 1, "border_color": c["border"]}
+        for value, color in (('"Ajout"', c["ok"]), ('"Retrait"', c["ko"])):
+            ws.conditional_format(first, 0, last, 0, {"type": "cell", "criteria": "==", "value": value,
+                                                      "format": self.F.dxf(bg_color=color, **edge), "stop_if_true": True})
+        ws.conditional_format(first, 0, last, len(RECAP_COLS) - 1, {
+            "type": "formula", "criteria": f'=$H{first + 1}<>""', "format": self.F.dxf(**edge)})
+        ws.freeze_panes(first, 0)
+        ws.set_landscape(); ws.set_paper(9); ws.fit_to_pages(1, 0); ws.repeat_rows(h)
+        ws.print_area(0, 0, last, len(RECAP_COLS) - 1)
+        self._protect(ws)
+
+    # ------------------------------------------------------------------ _calc (masqué) : aide au calcul du récapitulatif
+    def _calc_sheet(self, ws, infos: list[SheetInfo]):
+        """Une ligne par ligne de ressource (retraits) et par ligne du tableau d'ajout.
+
+        Colonne B / I : compteur cumulé des demandes ; le récapitulatif retrouve la n-ième demande par
+        MATCH(n; compteur; 0), sans fonction volatile ni tableau dynamique (compatible toutes versions d'Excel).
+        """
+        F = self.F
+        heads = ["feuille", "cumul retraits", "nom", "identifiant", "commentaire", "groupe", "propriétaire", "",
+                 "cumul ajouts", "nom", "identifiant", "groupe", "justification", "droit", "propriétaire"]
+        for j, h in enumerate(heads):
+            if h:
+                ws.write_string(0, j, h, F(bold=True))
+        groups = {(g["sheet"], g["level"]): g["group"] for g in self.groups}
+        r = 1
+        for info in infos:
+            if not info.n_rows:
+                continue
+            sn = _sq(info.name)
+            dec = info.dec_cols
+            com = info.dec_cols[-1] + 1
+            for k, p in enumerate(info.res.rows):
+                R = info.first + 1 + k                                   # numéro de ligne Excel dans la feuille de ressource
+                cell = lambda col: f"'{sn}'!${xl_col_to_name(col)}${R}"  # noqa: E731
+                if self.native:
+                    cond = f"AND({cell(dec[1])}=TRUE,{cell(dec[0])}<>TRUE)"
+                else:
+                    cond = f'{cell(dec[0])}="Non"'
+                prev = f"B{r}+" if r > 1 else ""
+                ws.write_string(r, 0, safe(info.name), F())
+                ws.write_formula(r, 1, f"={prev}IF({cond},1,0)", F(), 0)
+                ws.write_formula(r, 2, f'={cell(0)}&""', F(), "")
+                ws.write_formula(r, 3, f'={cell(1)}&""', F(), "")
+                ws.write_formula(r, 4, f'={cell(com)}&""', F(), "")
+                ws.write_string(r, 5, safe(groups.get((info.name, p.level), "")), F())
+                ws.write_string(r, 6, safe(info.scope.label), F())
+                r += 1
+        # ajouts : lignes du tableau « Personnes à ajouter » de la Synthèse
+        single = self.book.scopes[0].label if len(self.book.scopes) == 1 else ""
+        gcol = lambda k: xl_col_to_name(META_C2 + META_GROUPS.index(k))   # noqa: E731
+        ng = len(self.groups)
+        for i in range(self.n_add):
+            r = 1 + i
+            S = self.add_first + 1 + i                                    # ligne Excel dans la Synthèse
+            syn = lambda col: f"'{SHEET_SYN}'!${col}${S}"                 # noqa: E731
+            used = f"LEN(TRIM({syn('A')}&{syn('B')}&{syn('C')}&{syn('F')}))>0"
+            prev = f"I{r}+" if i else ""
+            ws.write_formula(r, 8, f"={prev}IF({used},1,0)", F(), 0)
+            ws.write_formula(r, 9, f'={syn("A")}&""', F(), "")
+            ws.write_formula(r, 10, f'={syn("B")}&""', F(), "")
+            ws.write_formula(r, 11, f'={syn("C")}&""', F(), "")
+            ws.write_formula(r, 12, f'={syn("F")}&""', F(), "")
+            if ng:
+                meta = lambda k: f"'_meta'!${gcol(k)}$2:${gcol(k)}${ng + 1}"   # noqa: E731
+                m = f"MATCH(L{r + 1},{meta('group')},0)"
+                ws.write_formula(r, 13, f'=IFERROR(IF(INDEX({meta("level")},{m})="{FULL}","{LEVEL_LABELS[FULL]}","{LEVEL_LABELS[READ]}"),"")', F(), "")
+                ws.write_formula(r, 14, f'=IFERROR(INDEX({meta("owner")},{m}),"{_q(single)}")', F(), single)
+            else:
+                ws.write_string(r, 13, "", F())
+                ws.write_string(r, 14, safe(single), F())
+        self._protect(ws)
+
     # ------------------------------------------------------------------ _meta (masqué)
     def _meta_sheet(self, ws, infos: list[SheetInfo]):
         F = self.F
@@ -581,7 +860,7 @@ class BookBuilder:
             ("folders", folders),
             ("export_dates", " | ".join(dates)),
             ("checkbox_mode", self.mode),
-            ("decision_values", "Oui|Non|À vérifier" if not self.native else "Conserver=TRUE|Retirer=TRUE (vide = non traité)"),
+            ("decision_values", "Oui|Non" if not self.native else "Conserver=TRUE|Retirer=TRUE (vide = non traité)"),
             ("n_resources", str(len(infos))),
             ("n_rows", str(sum(i.n_rows for i in infos))),
             ("data_hash", self._data_hash()),
@@ -592,7 +871,18 @@ class BookBuilder:
             ("add_col_name", "A"),
             ("add_col_sam", "B (optionnel)"),
             ("add_col_group", "C (fusion C:E ; liste MetaGroups.group)"),
-            ("add_col_justification", "F (fusion F:I)"),
+            ("add_col_justification", "F (fusion F:H)"),
+            ("cover_sheet", SHEET_COVER),
+            ("signature_sheet", SHEET_INSTR),
+            ("signature_cells", f"nom {self.sig['name']} · fonction {self.sig['role']} · date {self.sig['date']} · "
+                                      f"attestation {self.sig['attest']} · signature {self.sig['signature']} · statut {self.sig['status']}"),
+            ("cover_history_rows", f"{self.hist_first + 1}-{self.hist_last + 1} (colonnes B:H : " + ", ".join(UPDATE_COLS) + ")"),
+            ("classification", str(self.cfg["review"].get("classification") or "")),
+            ("recap_sheet", SHEET_RECAP),
+            ("recap_header_row", str(self.recap_header_row + 1)),
+            ("recap_first_row", str(self.recap_first + 1)),
+            ("recap_last_row", str(self.recap_last + 1)),
+            ("recap_note", "feuille dérivée (formules, via la feuille masquée _calc) : ne pas relire pour l'ingestion"),
             ("row_key", "sha1(dossier|sous-dossier|ressource|niveau|SamAccountName|n° d'occurrence)[:16], casse ignorée"),
         ]
         # bloc 1 : clé / valeur (colonnes A:B)

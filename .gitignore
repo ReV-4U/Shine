@@ -4,7 +4,6 @@ __pycache__/
 .pytest_cache/
 build/
 dist/
-*.spec
 
 # Sorties et données : ne JAMAIS versionner (données personnelles)
 sortie/
@@ -12,6 +11,3 @@ shine/
 *.xlsx
 *.csv
 *.7z
-
-# Configuration locale (contact, dates…)
-shine.yaml

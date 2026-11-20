@@ -75,21 +75,21 @@ echo.
 echo [3/3] Construction de Shine.exe ...
 if /i "%~1"=="/force" goto :build
 if not exist "dist\Shine.exe" goto :build
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$exe=(Get-Item 'dist\Shine.exe').LastWriteTime; $src=Get-ChildItem -Path . -Include *.py,config.yaml -Recurse -File | Where-Object { $_.FullName -notmatch '\\(build|dist|tests)\\' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if($src -and $src.LastWriteTime -gt $exe){exit 1}else{exit 0}"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$exe=(Get-Item 'dist\Shine.exe').LastWriteTime; $src=Get-ChildItem -Path . -Include *.py,config.yaml,config.spec -Recurse -File | Where-Object { $_.FullName -notmatch '\\(build|dist|tests)\\' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if($src -and $src.LastWriteTime -gt $exe){exit 1}else{exit 0}"
 if errorlevel 1 goto :build
 echo      OK : dist\Shine.exe est deja a jour (relancer avec /force pour le reconstruire).
 goto :done
 
 :build
-%PY% -m PyInstaller --noconfirm --clean --onefile --windowed --name Shine --add-data "config.yaml;." shine.py || goto :err
+%PY% -m PyInstaller --noconfirm --clean config.spec || goto :err
 if not exist "dist\Shine.exe" goto :err
 
 :done
 echo.
 echo ==========================================================================
 echo  Termine : %~dp0dist\Shine.exe
-echo  Copiez Shine.exe ou vous voulez. Un shine.yaml place a cote est charge
-echo  automatiquement (contact, organisation...).
+echo  Copiez Shine.exe ou vous voulez. Un config.yaml place a cote est charge
+echo  automatiquement (contact, organisation...) : pas besoin de reconstruire.
 echo ==========================================================================
 pause
 exit /b 0

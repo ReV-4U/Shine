@@ -25,8 +25,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from compiler import compile_all, group_books  # noqa: E402
-from config import ConfigError, load_config  # noqa: E402
+from config import DEFAULT_CONFIG_PATH, ConfigError, load_config  # noqa: E402
 from excel import build_book, safe  # noqa: E402
+from xlsxwriter.exceptions import FileCreateError  # noqa: E402
 
 log = logging.getLogger("revue_droits")
 
@@ -46,9 +47,12 @@ def app_dir() -> Path:
 
 
 def default_user_config() -> str | None:
-    """`shine.yaml` posé à côté de l'outil : configuration utilisateur chargée automatiquement."""
-    f = app_dir() / "shine.yaml"
-    return str(f) if f.is_file() else None
+    """`config.yaml` posé à côté de l'exécutable : chargé automatiquement, il remplace la copie embarquée.
+
+    Depuis les sources, c'est le fichier par défaut lui-même : inutile de le charger deux fois.
+    """
+    f = app_dir() / "config.yaml"
+    return str(f) if f.is_file() and f.resolve() != DEFAULT_CONFIG_PATH.resolve() else None
 
 
 DEADLINE_FORMATS = ("%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%d/%m/%y", "%Y-%m-%d")
@@ -94,10 +98,30 @@ def parse_args(argv=None):
                    help="ne traiter que ce dossier (nom ou libellé) ; option répétable")
     p.add_argument("--period", help="période AAAA-MM du nom de fichier (défaut : mois courant)")
     p.add_argument("--deadline", type=_deadline_arg, metavar="JJ/MM/AAAA",
-                   help="date limite de retour des classeurs, affichée dans l'onglet Instructions (défaut : review.deadline)")
+                   help="date limite de retour des classeurs, affichée dans les onglets En-tête et Instructions (défaut : review.deadline)")
     p.add_argument("--export-date", type=_date, help="date de l'export AAAA-MM-JJ (défaut : date des fichiers CSV)")
     p.add_argument("-v", "--verbose", action="store_true")
     return p.parse_args(argv)
+
+
+def _os_error(e: BaseException) -> OSError | None:
+    """L'OSError d'origine (xlsxwriter enveloppe l'erreur d'écriture dans FileCreateError)."""
+    for x in (e, *e.args):
+        if isinstance(x, OSError):
+            return x
+    return None
+
+
+def _write_error_message(out: Path, e: BaseException) -> str:
+    err = _os_error(e)
+    reason = (err.strerror or type(err).__name__) if err else type(e).__name__
+    name = Path(err.filename).name if err and err.filename else ""
+    return (f"Impossible d'écrire les classeurs dans « {out} » ({reason}){f' : {name}' if name else ''}.\n"
+            "Causes les plus probables :\n"
+            "  1) Le classeur du même jour est déjà ouvert dans Excel : fermez-le puis relancez.\n"
+            "  2) Windows bloque l'écriture dans ce dossier : « Accès contrôlé aux dossiers » (Sécurité Windows), antivirus "
+            "ou synchronisation OneDrive. Autorisez Shine.exe ou choisissez un autre dossier de sortie (--output).\n"
+            "  3) Chemin trop long : choisissez un dossier de sortie plus court.")
 
 
 def run(args, now: dt.datetime | None = None) -> int:
@@ -124,24 +148,32 @@ def run(args, now: dt.datetime | None = None) -> int:
         print("Aucun dossier ne correspond à --only.", file=sys.stderr)
         return 2
 
-    out.mkdir(parents=True, exist_ok=True)
     stamp = now.strftime(cfg["output"]["date_format"])
     books = group_books(result.scopes, cfg)
     reports, used = [], set()
-    for book in books:
-        stem = cfg["output"]["folder_pattern"].format(label=book.label, date=stamp)
-        k = 2
-        while stem.casefold() in used:
-            stem, k = f"{cfg['output']['folder_pattern'].format(label=book.label, date=stamp)}_{k}", k + 1
-        used.add(stem.casefold())
-        folder = out / stem
-        folder.mkdir(parents=True, exist_ok=True)
-        reports.append(build_book(folder / f"{stem}.xlsx", book, cfg, mode, period, now))
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+        for book in books:
+            stem = cfg["output"]["folder_pattern"].format(label=book.label, date=stamp)
+            k = 2
+            while stem.casefold() in used:
+                stem, k = f"{cfg['output']['folder_pattern'].format(label=book.label, date=stamp)}_{k}", k + 1
+            used.add(stem.casefold())
+            folder = out / stem
+            folder.mkdir(parents=True, exist_ok=True)
+            reports.append(build_book(folder / f"{stem}.xlsx", book, cfg, mode, period, now))
+    except (OSError, FileCreateError) as e:
+        print(_write_error_message(out, e), file=sys.stderr)
+        return 3
     report_path = out / f"rapport_lecture_{stamp}.csv"
-    if result.problems:
-        write_read_report(report_path, result.problems, cfg["output"]["report_delimiter"])
-    elif report_path.exists():
-        report_path.unlink()          # pas de problème cette fois : on ne laisse pas un ancien rapport trompeur
+    try:
+        if result.problems:
+            write_read_report(report_path, result.problems, cfg["output"]["report_delimiter"])
+        elif report_path.exists():
+            report_path.unlink()          # pas de problème cette fois : on ne laisse pas un ancien rapport trompeur
+    except OSError as e:
+        print(_write_error_message(out, e), file=sys.stderr)
+        return 3
 
     # ---- résumé console : uniquement des compteurs, jamais de données personnelles
     st = result.stats
@@ -158,7 +190,7 @@ def run(args, now: dt.datetime | None = None) -> int:
     print(f"Mode de réponse    : {mode}")
     print(f"Date limite        : {cfg['review']['deadline']}")
     for label, value, how in (("date limite", cfg["review"]["deadline"], "--deadline"),
-                              ("contact", cfg["review"]["contact"], "review.contact dans shine.yaml")):
+                              ("contact", cfg["review"]["contact"], "review.contact dans config.yaml")):
         if str(value).strip().startswith("[") or not str(value).strip():
             print(f"ATTENTION : {label} non renseigné(e) : les classeurs afficheront un texte à compléter ({how}).")
     print(f"Dossier de sortie  : {out}")

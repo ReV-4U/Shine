@@ -33,15 +33,16 @@ Double-clic → une fenêtre demande **le dossier global** (ex. `Liaison`), puis
 (JJ/MM/AAAA, non passée ; une date est proposée par défaut) → mise en forme → message de fin avec les
 compteurs → le dossier de sortie (`Documents\shine`) s'ouvre. Aucune console, aucune option à connaître.
 Avec des arguments (`Shine.exe --input … --output …`), l'exécutable se comporte comme la ligne de commande
-décrite ci-dessous. Le contact (et l'organisation) se renseignent dans `shine.yaml` (`review.contact`) ; la date limite,
-elle, est saisie au lancement. Un fichier `shine.yaml` posé **à côté de `Shine.exe`** (ou de `shine.py`) est chargé
-automatiquement (date limite, contact, `show_dn`, `owners`…) : il suffit d'y mettre ce qui change.
+décrite ci-dessous. Le contact (et l'organisation) se renseignent dans `config.yaml` (`review.contact`, `review.organisation`) ; la date limite,
+elle, est saisie au lancement. Il n'y a qu'**un seul fichier de configuration : `config.yaml`**. Il est embarqué dans `Shine.exe` ; un `config.yaml`
+posé **à côté de `Shine.exe`** le remplace (fusion clé par clé) sans reconstruire l'exécutable : copiez-y le fichier,
+modifiez le contact, la version, `owners`, `show_dn`… Les clés absentes gardent leur valeur par défaut.
 
 ### Construire `Shine.exe` (`build_exe.bat`)
 
 À faire une seule fois, sur Windows, avec un accès internet : double-cliquer `build_exe.bat`. Le résultat est
-`dist\Shine.exe`, à copier où l'on veut (le dossier `build\`, `dist\` et `Shine.spec` sont des fichiers
-temporaires, ignorés par Git).
+`dist\Shine.exe`, à copier où l'on veut (les dossiers `build\` et `dist\` sont temporaires, ignorés par Git ;
+la recette de construction est `config.spec`, versionnée, que `build_exe.bat` passe à PyInstaller).
 
 Le script **vérifie d'abord ce qui est déjà installé** et ne télécharge que ce qui manque. Si tout est présent, il
 n'a même pas besoin d'internet. Dans l'ordre :
@@ -61,6 +62,7 @@ En cas d'échec, un message indique quoi faire et la fenêtre reste ouverte.
 |---|---|---|
 | « téléchargement de Python impossible » | proxy ou pare-feu d'entreprise qui bloque python.org | installer Python 3.10+ à la main (https://www.python.org/downloads/, cocher *Add python.exe to PATH*), puis relancer le `.bat`, qui le détecte |
 | « signature de l'installateur non valide » | fichier corrompu ou altéré | relancer ; si cela persiste, installer Python à la main |
+| « Impossible d'écrire les classeurs… » / `FileCreateError` | 1) le classeur du jour est ouvert dans Excel (Shine s'arrête avec un message et ne crée aucun fichier de secours) ; 2) Windows bloque l'écriture dans le dossier de sortie : « Accès contrôlé aux dossiers », antivirus, OneDrive ; 3) chemin trop long | fermer le classeur dans Excel ; autoriser `Shine.exe` ou choisir un autre dossier (`--output`, ou `output.root` dans `config.yaml`) ; raccourcir le chemin |
 | échec de `pip install` | proxy qui bloque PyPI (pypi.org) | configurer le proxy pour `pip`, ou faire autoriser PyPI |
 | Windows SmartScreen / antivirus sur `Shine.exe` | exécutable non signé | le faire autoriser par la sécurité, ou le signer avec un certificat de signature de code |
 
@@ -73,7 +75,7 @@ Le script n'a pas été testé sur tous les postes : au premier essai, relever l
 | `--config` | YAML fusionné avec `config.yaml` (les listes remplacent, les dictionnaires fusionnent) |
 | `--checkbox-mode` | `dropdown` (défaut) ou `native` |
 | `--only` | ne traiter que ce dossier (nom ou libellé), option répétable |
-| `--deadline` | date limite de retour JJ/MM/AAAA, affichée dans l'onglet Instructions (par défaut : `review.deadline`) |
+| `--deadline` | date limite de retour JJ/MM/AAAA, affichée dans les onglets En-tête et Instructions (par défaut : `review.deadline`) |
 | `--period` | période du nom de fichier (défaut : mois courant) |
 | `--export-date` | date de l'export affichée (défaut : date de modification des CSV) |
 | `-v` | messages détaillés (jamais de données personnelles) |
@@ -110,43 +112,71 @@ si `owners:` regroupe plusieurs dossiers. Relancer le même jour écrase les fic
 
 ## Le classeur
 
-`Instructions` · `Synthèse` · une feuille par ressource · `_meta` (masqué).
+`En-tête` · `Instructions` · `Synthèse` · `Récapitulatif` · une feuille par ressource · `_calc` et `_meta` (masqués).
 
-* **Instructions** : objectif, mode d'emploi, date limite et contact (`review.*`), légende des couleurs.
+* **En-tête** (page de garde, d'après le modèle fourni) : en haut à droite **Version / Indice / Date** ; au centre le
+  titre « Revue des droits NTFS » et le périmètre ; **Classification du document** (`1-Public`, `2-Restreint`,
+  `3-Confidentiel` : le niveau de `review.classification` est mis en évidence) ; tableau **Mise à jour**
+  `Auteur | Date | Version | Nature de la modification | Approbation | Validation | Status`. La première ligne est
+  écrite par Shine (création du classeur ; « Validation » reprend le statut de la signature) ; `excel.history_rows`
+  lignes libres suivent (6 par défaut) pour tracer les modifications. Réglages : `review.version`, `review.index`,
+  `review.classification`, `review.author`, `review.footer_notice` (mention rouge en pied de page, vide par défaut),
+  couleurs `excel.colors.cover_*`.
+* **Instructions** : objectif, mode d'emploi (`texts.steps_*`), consigne de date limite (`texts.return_line`,
+  `review.deadline`), contact, puis le bloc **Validation et signature** (nom, fonction, date, attestation « Oui »,
+  signature saisie ; le statut passe à « Signé » quand tout est renseigné et s'affiche aussi dans l'En-tête), et
+  la légende des couleurs.
+* **Signature électronique** : la saisie du nom + la date valent signature électronique *simple* (traçabilité
+  interne). Une signature numérique certifiée demande un certificat et se fait à la main, en dernier : Fichier ›
+  Informations › Protéger le classeur › Ajouter une signature numérique (toute modification ultérieure
+  l'invalide). Shine ne signe rien lui-même.
 * **Feuille de ressource** : en-tête (ressource, dossier d'origine, groupes sources et effectifs, date de
-  l'export), commentaire général, puis un tableau filtrable à volets figés :
-  `Nom | Identifiant | Droit actuel | Accès légitime ? | Commentaire | Clé (masquée)`.
+  l'export), puis un tableau filtrable à volets figés :
+  `Nom | Identifiant | Droit actuel | Accès autorisé ? | Commentaire | Clé (masquée)`, et **sous le tableau** la
+  zone de commentaire général (un lien en haut de page y renvoie).
   Les lignes sont triées : Modification puis Lecture, puis nom, puis identifiant. Colonne `DN (annuaire)`
   optionnelle (`excel.show_dn: true`).
-* **Synthèse** : par ressource, membres Full / Read, lignes à traiter, traitées, à préciser, reste,
-  avancement — par formules, avec lien vers l'onglet et totaux (`SUBTOTAL`, sensibles aux filtres).
+* **Synthèse** : par ressource, membres Full / Read, lignes à traiter, traitées, reste, avancement — par
+  formules, avec lien vers l'onglet et totaux (`SUBTOTAL`, sensibles aux filtres).
   En dessous du total : le tableau **Personnes à ajouter** (`excel.add_rows` lignes, 20 par défaut) :
   `Nom | Identifiant (optionnel) | Groupe de ressource | Justification`. « Groupe de ressource » est une liste déroulante des
   **fichiers CSV du classeur** (nom sans extension, ex. `Activites_etudes_Full`, `Activites_etudes_Read`) : la personne
-  est à ajouter à ce groupe. Quand un classeur regroupe plusieurs dossiers (`owners:`), les libellés sont préfixés du
-  dossier (`Export_E.Test7 / Documentation_INTERNE_Full`). Chaque feuille de ressource renvoie à ce tableau par un lien.
-* **Non traité = cellule vide.** Couleurs par mise en forme conditionnelle : vert = validé, rouge = à retirer,
-  jaune = à vérifier, gris zébré = non traité.
-* Mise en page : police unique, couleurs en paramètres (`excel.colors`), impression A4 paysage ajustée en
-  largeur, titres répétés.
+  est à ajouter à ce groupe ; le droit (Lecture / Modification) s'en déduit. Quand un classeur regroupe plusieurs
+  dossiers (`owners:`), les libellés sont préfixés du dossier (`Export_E.Test7 / Documentation_INTERNE_Full`).
+  Chaque feuille de ressource renvoie à ce tableau par un lien.
+* **Récapitulatif** : tableau **calculé automatiquement** (aucune saisie) qui liste les demandes à transmettre :
+  `Action | Propriétaire du groupe | Nom | Identifiant | Droit souhaité | Justification | Ressource`.
+  « Ajout » = lignes remplies du tableau « Personnes à ajouter » ; « Retrait » = lignes « Non » (ou « Retirer »
+  seule cochée), avec leur commentaire, le droit « Aucun (retrait) » et le groupe CSV concerné. Il fonctionne par
+  formules ordinaires (`INDEX`/`MATCH` sur la feuille masquée `_calc`) : ni fonction volatile, ni tableau dynamique,
+  donc toutes versions d'Excel. Capacité : `excel.add_rows` + au plus `excel.recap_max_removals` retraits
+  (500 par défaut) ; au-delà, un avertissement s'affiche en haut de l'onglet.
+* **Non traité = cellule vide.** Couleurs par mise en forme conditionnelle : vert = accès autorisé, rouge = à
+  retirer, gris zébré = non traité. Mise en page : police unique, couleurs en paramètres (`excel.colors`, seules
+  les couleurs utilisées y figurent), impression A4 paysage ajustée en largeur, titres répétés.
+* **Incohérence Lecture / Modification** : si une même personne figure dans les deux fichiers, Shine ne la détecte
+  pas (pas d'analyse) ; l'instruction n° 4 demande au propriétaire de la corriger lui-même, en la justifiant en
+  commentaire. Chaque ligne se valide séparément.
 
 ### Liste déroulante ou cases à cocher natives
 
 | | `dropdown` (défaut) | `native` |
 |---|---|---|
 | Compatibilité | toutes versions d'Excel, LibreOffice | Excel 365 (LibreOffice affiche `FALSE`/`TRUE`) |
-| Colonnes | `Accès légitime ?` (Oui / Non / À vérifier) | `Conserver` et `Retirer` |
+| Colonnes | `Accès autorisé ?` (Oui / Non) | `Conserver` et `Retirer` |
 | Non traité | cellule vide | deux cases décochées |
 
 Une case native n'a que deux états ; avec une seule case, « non traité » et « à retirer » seraient
-indiscernables. Le mode natif utilise donc deux cases ; les deux cochées = incohérent, compté « à préciser ».
+indiscernables. Le mode natif utilise donc deux cases ; les deux cochées = incohérent, compté **non traité**
+(ni vert ni rouge, absent du récapitulatif).
 
 ### Protection
 
 Feuilles protégées **sans mot de passe**. Seules les cellules de décision, de commentaire et du bloc d'ajout
 sont déverrouillées ; filtre autorisé. **Limite d'Excel** : le tri est refusé dès qu'une cellule de la plage est
 verrouillée, d'où la consigne « filtrez plutôt que triez » (la clé masquée par ligne protège de toute façon la
-relecture). Un onglet masqué se réaffiche en deux clics : `_meta` ne contient que des clés techniques.
+relecture). Un onglet masqué se réaffiche en deux clics : `_meta` et `_calc` ne contiennent que des clés techniques et des
+formules de calcul. Le récapitulatif est dérivé : l'ingestion de la phase 2 ne le relit pas.
 
 ## Sécurité et confidentialité
 
@@ -157,20 +187,22 @@ relecture). Un onglet masqué se réaffiche en deux clics : `_meta` ne contient 
 
 ## Phase 2 — contrat de relecture (`ingest`, non implémenté)
 
-* Aucune cellule fusionnée dans les zones de données des feuilles de ressource (seul le commentaire général, hors
+* Aucune cellule fusionnée dans les zones de données des feuilles de ressource (seul le commentaire général, sous le
   tableau, est fusionné). Exception : dans le tableau « Personnes à ajouter » de la Synthèse, le groupe de ressource
-  occupe C:E et la justification F:I par ligne (valeurs lues en colonnes C et F ; nom en A, identifiant facultatif en B).
+  occupe C:E et la justification F:H par ligne (valeurs lues en colonnes C et F ; nom en A, identifiant facultatif en B).
 * Chaque ligne porte une **clé stable** (colonne masquée) :
   `sha1(dossier | sous-dossier | ressource | niveau | identifiant | n° d'occurrence)[:16]`, casse ignorée,
   indépendante du chemin d'entrée. Le niveau (`full` / `read`) et le numéro d'occurrence font que deux lignes
   identiques d'un même fichier gardent des clés distinctes.
-* `_meta` (schéma v3) contient quatre tableaux Excel : `MetaKV_*` (`schema_version`, `tool_version`,
+* `_meta` (schéma v4) contient quatre tableaux Excel : `MetaKV_*` (`schema_version`, `tool_version`,
   `generated_at`, `period`, `workbook_label`, `folders`, `export_dates`, `checkbox_mode`, `decision_values`,
   `n_resources`, `n_rows`, `data_hash`, `row_key`, et pour le tableau d'ajout : `add_sheet`, `add_header_row`,
-  `add_first_row`, `add_last_row`, `add_col_name`, `add_col_sam`, `add_col_group`, `add_col_justification`) ; `MetaSheets_*` (`sheet, folder, subpath, resource,
+  `add_first_row`, `add_last_row`, `add_col_name`, `add_col_sam`, `add_col_group`, `add_col_justification` ; pour l'en-tête et le récapitulatif :
+  `cover_sheet`, `cover_history_rows`, `signature_sheet`, `signature_cells`, `recap_sheet`, `recap_header_row`, `recap_first_row`,
+  `recap_last_row`, `recap_note`) ; `MetaSheets_*` (`sheet, folder, subpath, resource,
   group_full, group_read, header_row, first_data_row, last_data_row, n_rows, comment_cell, decision_cols, key_col,
   data_hash`) ; `MetaRows_*` (`sheet, key, sam, level, initial_row`) ; `MetaGroups_*` (`group, sheet, folder,
-  subpath, resource, level, file` : source de la liste « Groupe de ressource »).
+  subpath, resource, level, file, owner` : source de la liste « Groupe de ressource »).
 * Un classeur dont `schema_version` ou `data_hash` ne correspond pas à l'export de référence doit être refusé.
 
 ## Organisation
