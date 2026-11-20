@@ -649,3 +649,12 @@ def test_unsuffixed_recap_live(cfg, tmp_path):
     s = w["Synthèse"]
     assert [s.cell(r, 7).value for r in (5, 6, 7)] == [0, 1, 0]                          # « Traitées » : une ligne de Delta traitée
     assert [s.cell(8, c).value for c in (3, 4, 5, 6)] == [1, 0, 3, 4]
+
+
+def test_cover_approval_from_config(cfg, ntftest, tmp_path):
+    assert build_all(ntftest, cfg, tmp_path / "a")[1]["E.Test7"] and \
+        openpyxl.load_workbook(tmp_path / "a" / "E.Test7.xlsx")["En-tête"]["F11"].value is None       # vide par défaut : à saisir
+    cfg["review"]["approval"] = "J. Martin"
+    paths = build_all(ntftest, cfg, tmp_path / "b")[1]
+    ws = openpyxl.load_workbook(paths["E.Test7"])["En-tête"]
+    assert ws["F11"].value == "J. Martin" and not ws["F11"].protection.locked

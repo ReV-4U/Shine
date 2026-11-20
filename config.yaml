@@ -70,6 +70,7 @@ review:
   index: 'A'                 # indice de révision (onglet « En-tête »)
   classification: '3-Confidentiel'   # '1-Public', '2-Restreint' ou '3-Confidentiel' : mis en évidence dans l'« En-tête »
   author: ''                 # « Auteur » de la 1re ligne de « Mise à jour » ; vide = « Shine (génération automatique) »
+  approval: ''               # « Approbation » de la 1re ligne de « Mise à jour » (nom ou initiales de l'approbateur) ; vide = case à saisir
   footer_notice: ''          # mention en pied de page (rouge) de l'« En-tête », ex. « Document propriété de … » ; vide = aucune
 
 texts:

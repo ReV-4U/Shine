@@ -126,7 +126,7 @@ si `owners:` regroupe plusieurs dossiers. Relancer le même jour écrase les fic
   écrite par Shine (création du classeur ; « Validation » reprend le statut de la signature) ; `excel.history_rows`
   lignes libres suivent (6 par défaut) pour tracer les modifications ; les dates se choisissent dans une liste
   déroulante (du jour de génération à `excel.date_choices_days` jours après, 90 par défaut ; saisie libre possible). Réglages : `review.version`, `review.index`,
-  `review.classification`, `review.author`, `review.footer_notice` (mention rouge en pied de page, vide par défaut),
+  `review.classification`, `review.author`, `review.approval` (case « Approbation » de la 1re ligne), `review.footer_notice` (mention rouge en pied de page, vide par défaut),
   couleurs `excel.colors.cover_*`.
 * **Instructions** : objectif, mode d'emploi (`texts.steps_*`), consigne de date limite (`texts.return_line`,
   `review.deadline`), contact, puis le bloc **Validation et signature** (nom, fonction, date, attestation « Oui »,

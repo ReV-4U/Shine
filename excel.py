@@ -628,7 +628,8 @@ class BookBuilder:
         ws.write_string(r1, 3, safe(str(rv.get("version") or "")), F(bg_color=c["cover_body"], font_size=10, valign="vcenter",
                                                                       align="center", **white))
         ws.write_string(r1, 4, f"Création du classeur à partir des exports du {exports} (Shine v{TOOL_VERSION} : mise en forme, sans analyse).", body)
-        ws.write_blank(r1, 5, None, free)                                              # approbation : à saisir
+        approval = str(rv.get("approval") or "").strip()                               # review.approval ; vide = à saisir
+        ws.write_string(r1, 5, safe(approval), free) if approval else ws.write_blank(r1, 5, None, free)
         ws.write_formula(r1, 6, f"='{SHEET_INSTR}'!${self.sig['status'][0]}${self.sig['status'][1:]}", body, "Non signé")  # validation = signature
         ws.write_string(r1, 7, "Émis", body)
         ws.set_row(r1, 30)
