@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+import unicodedata
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -62,15 +63,46 @@ def _text(v) -> str:
     return str(v)
 
 
+_MONTHS = ("janvier", "fevrier", "mars", "avril", "mai", "juin", "juillet", "aout", "septembre", "octobre", "novembre", "decembre")
+
+
+def _plain(s: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFD", s.casefold()) if unicodedata.category(c) != "Mn")
+
+
+def _month_number(v) -> int | None:
+    """Numéro du mois, quelle que soit la forme enregistrée par Excel :
+    « Novembre » (actuel), « 11 - Novembre » (anciens classeurs), 11, ou une vraie date (Excel convertissait « 11 - Novembre »)."""
+    if isinstance(v, (dt.date, dt.datetime)):
+        return v.month
+    t = _text(v).strip()
+    if not t:
+        return None
+    m = re.match(r"^(\d{1,2})(?:\s*[-–]|$)", t)
+    if m:
+        return int(m.group(1)) if 1 <= int(m.group(1)) <= 12 else None
+    p = _plain(t)
+    for i, name in enumerate(_MONTHS, 1):
+        if len(p) >= 3 and name.startswith(p):                      # nom entier ou abréviation (nov, novem…)
+            return i
+    return None
+
+
 def _date_text(day, month, year) -> tuple[str, bool]:
-    """Date JJ/MM/AAAA à partir des trois listes ; (texte, valide). Le mois est de la forme « 11 - Novembre »."""
-    parts = [_text(day).strip(), _text(month).strip(), _text(year).strip()]
-    if not all(parts):
-        return " / ".join(p or "…" for p in parts), False
+    """Date JJ/MM/AAAA à partir des trois listes (jour, mois, année) ; (texte, valide)."""
+    d, y = _text(day).strip(), _text(year).strip()
+    mo = _month_number(month)
+    shown = [d or "…", (_month_name(mo) if mo else (_text(month).strip() or "…")), y or "…"]
+    if not (d and y and mo):
+        return " / ".join(shown), False
     try:
-        return dt.date(int(parts[2]), int(parts[1][:2]), int(parts[0])).strftime("%d/%m/%Y"), True
+        return dt.date(int(y), mo, int(d)).strftime("%d/%m/%Y"), True
     except ValueError:
-        return " / ".join(parts), False
+        return " / ".join(shown), False
+
+
+def _month_name(n: int) -> str:
+    return ("Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre")[n - 1]
 
 
 def read_recap(src: Path) -> dict:
@@ -93,6 +125,9 @@ def read_recap(src: Path) -> dict:
     day_v, month_v, year_v = (si[c].value for c in (day, month, year))
     date_txt, date_ok = _date_text(day_v, month_v, year_v)
 
+    sg = {"name": _text(si[name].value), "signature": _text(si[signature].value)}
+    # statut recalculé d'après les valeurs lues (et non repris tel quel du classeur) : il reste cohérent avec la date affichée
+    status_txt = "Signé" if sg["name"] and sg["signature"] and date_ok and bool(si[attest].value is True) else "Non signé"
     rc = wb[sheet]
     first, last, head = (int(meta[k]) for k in ("recap_first_row", "recap_last_row", "recap_header_row"))
     header = [_text(c) for c in next(rc.iter_rows(min_row=head, max_row=head, max_col=7, values_only=True))]
@@ -105,7 +140,7 @@ def read_recap(src: Path) -> dict:
         "header": header, "rows": rows, "n_add": n_add, "n_rem": n_rem,
         "sig": {"name": _text(si[name].value), "role": _text(si[role].value), "date": date_txt, "date_ok": date_ok,
                 "attest": bool(si[attest].value is True), "signature": _text(si[signature].value),
-                "status": _text(si[status].value)},
+                "status": status_txt},
     }
 
 

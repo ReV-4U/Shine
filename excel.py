@@ -524,19 +524,21 @@ class BookBuilder:
         ws.set_row(top + 3, 30)
         ws.set_row(top + 4, 36)
         # Excel n'a pas de calendrier intégré dans un .xlsx : jour / mois / année se choisissent dans trois listes.
-        # Mois « 01 - Janvier » : le numéro est lu par LEFT(...,2), indépendant de la langue d'Excel.
+        # Mois en toutes lettres, sans chiffre : « 11 - Novembre » était converti en DATE par Excel à la sélection dans la liste,
+        # ce qui faussait le numéro du mois. Le numéro se déduit du nom par MATCH sur une liste fixe (indépendant de la langue d'Excel).
         months = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre",
                   "Décembre"]
         y0 = self.now.year
         for col, vals, msg in ((2, [str(n) for n in range(1, 32)], "Jour : choisissez dans la liste."),
-                               (3, [f"{n:02d} - {m}" for n, m in enumerate(months, 1)], "Mois : choisissez dans la liste."),
+                               (3, months, "Mois : choisissez dans la liste."),
                                (4, [str(y0 + n) for n in range(3)], "Année : choisissez dans la liste.")):
             ws.data_validation(top + 2, col, top + 2, col, {
                 "validate": "list", "source": vals, "ignore_blank": True,
                 "input_title": "Date de validation", "input_message": msg,
                 "error_title": "Valeur non autorisée", "error_message": "Choisissez une valeur dans la liste."})
         # date retenue : valable seulement si les trois champs sont remplis et forment un jour qui existe (pas de 31 février)
-        d_v, m_v, y_v = f'VALUE({d_}&"")', f"VALUE(LEFT({m_},2))", f'VALUE({y_}&"")'
+        month_list = "{" + ",".join(f'"{m}"' for m in months) + "}"
+        d_v, m_v, y_v = f'VALUE({d_}&"")', f"MATCH({m_},{month_list},0)", f'VALUE({y_}&"")'
         date_ok = f"IFERROR(AND(COUNTA({d_},{m_},{y_})=3,DAY(DATE({y_v},{m_v},{d_v}))={d_v}),FALSE)"
         ws.conditional_format(top + 2, 2, top + 2, 4, {                  # jour impossible : les trois cases passent en rouge
             "type": "formula", "criteria": f"=AND(COUNTA({d_},{m_},{y_})=3,NOT({date_ok}))",
