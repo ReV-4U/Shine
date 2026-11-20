@@ -6,6 +6,8 @@
 * Double-clic sur Shine.exe (ou `python shine.py` sans argument) : une fenêtre demande le dossier global
   (ex. « Liaison »), le traitement se lance, puis le dossier de sortie s'ouvre.
 * Avec des arguments (`Shine.exe --input … --output …`) : mode ligne de commande de revue_droits.py.
+* Extraction du récapitulatif d'un classeur renvoyé : second choix de la fenêtre de lancement, ou
+  `Shine.exe --extract-recap <classeur.xlsx ou dossier> […] [--output dossier]`.
 
 Mise en forme uniquement ; traitement 100 % local ; aucune donnée personnelle affichée.
 """
@@ -22,9 +24,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import extract  # noqa: E402
 import revue_droits  # noqa: E402
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 TITLE = "Shine"
 
 
@@ -73,6 +76,19 @@ def process_folder(folder: str, output: str | None = None, deadline: str | None 
     return rc, text or "Aucune information.", getattr(args, "resolved_output", None)
 
 
+def process_recap(files: list[str], output: str | None = None) -> tuple[int, str, Path | None]:
+    """Extrait le récapitulatif de chaque classeur renvoyé. Renvoie (code, résumé sans donnée personnelle, dossier du 1er fichier)."""
+    try:
+        rc, text = extract.main(files, output)
+    except Exception as e:  # noqa: BLE001 - la fenêtre doit toujours pouvoir afficher quelque chose
+        tb = traceback.extract_tb(e.__traceback__)
+        where = f", {Path(tb[-1].filename).name}:{tb[-1].lineno}" if tb else ""
+        return 1, f"Erreur inattendue ({type(e).__name__}{where}). Transmettez ce message tel quel au développeur.", None
+    first = Path(files[0]) if files else None
+    out = Path(output) if output else (first if first and first.is_dir() else first.parent if first else None)
+    return rc, text, out
+
+
 def open_folder(path: Path) -> None:
     try:
         if sys.platform.startswith("win"):
@@ -85,6 +101,48 @@ def open_folder(path: Path) -> None:
         pass
 
 
+def choose_mode(root) -> str | None:
+    """Fenêtre de lancement : « compile » (mettre en forme des exports), « recap » (extraire un récapitulatif) ou None (fermée)."""
+    import tkinter as tk
+    choice: dict = {}
+    win = tk.Toplevel(root)
+    win.title(TITLE)
+    win.resizable(False, False)
+    win.attributes("-topmost", True)
+    tk.Label(win, text="Que souhaitez-vous faire ?", font=("Segoe UI", 11, "bold"), pady=12).pack()
+
+    def pick(v):
+        choice["v"] = v
+        win.destroy()
+    for text, v in (("Mettre en forme des exports\n(dossier d'exports → classeurs Excel)", "compile"),
+                    ("Extraire le récapitulatif\n(dossier de classeurs renvoyés → fichiers à part)", "recap")):
+        tk.Button(win, text=text, width=38, height=3, command=lambda v=v: pick(v)).pack(padx=20, pady=6)
+    tk.Label(win, text="").pack()
+    win.protocol("WM_DELETE_WINDOW", lambda: pick(None))
+    win.update_idletasks()
+    win.geometry(f"+{(win.winfo_screenwidth() - win.winfo_width()) // 2}+{(win.winfo_screenheight() - win.winfo_height()) // 3}")
+    win.grab_set()
+    root.wait_window(win)
+    return choice.get("v")
+
+
+def gui_recap(root) -> int:
+    from tkinter import filedialog, messagebox
+    folder = filedialog.askdirectory(parent=root, mustexist=True,
+                                     title="Shine — choisissez le dossier contenant les classeurs renvoyés")
+    if not folder:
+        root.destroy()
+        return 0
+    rc, text, out = process_recap([folder])
+    root.withdraw()
+    (messagebox.showinfo if rc == 0 else messagebox.showwarning)(
+        TITLE, ("Terminé.\n\n" if rc == 0 else "Terminé avec des erreurs.\n\n") + text, parent=root)
+    if out:
+        open_folder(out)
+    root.destroy()
+    return rc
+
+
 def gui() -> int:
     import tkinter as tk
     from tkinter import filedialog, messagebox, simpledialog
@@ -92,6 +150,12 @@ def gui() -> int:
     root = tk.Tk()
     root.withdraw()
     root.attributes("-topmost", True)
+    mode = choose_mode(root)
+    if mode is None:
+        root.destroy()
+        return 0
+    if mode == "recap":
+        return gui_recap(root)
     folder = filedialog.askdirectory(parent=root, title="Shine — choisissez le dossier global (ex. : Liaison)",
                                      mustexist=True)
     if not folder:
@@ -149,7 +213,21 @@ def gui() -> int:
 
 def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == "--extract-recap":
+        return main_recap(argv[1:])
     return revue_droits.main(argv) if argv else gui()
+
+
+def main_recap(argv: list[str]) -> int:
+    import argparse
+    p = argparse.ArgumentParser(prog="Shine.exe --extract-recap",
+                                description="Crée, pour chaque classeur renvoyé, un fichier Recap_<nom>.xlsx (valeurs figées).")
+    p.add_argument("files", nargs="+", help="classeur(s) .xlsx renvoyé(s) par les ayants droit, ou dossier à parcourir (sous-dossiers compris)")
+    p.add_argument("--output", help="dossier de sortie (défaut : à côté de chaque classeur)")
+    a = p.parse_args(argv)
+    rc, text, _ = process_recap(a.files, a.output)
+    print(text, file=sys.stderr if rc else sys.stdout)
+    return rc
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ avant de le renvoyer.
 Phase 1 : lecture et génération. La réinjection des classeurs revus (`ingest`, phase 2) est **préparée**
 (clés stables, onglet `_meta`) mais pas implémentée.
 
-Python 3.10+. Dépendances : `XlsxWriter`, `PyYAML` (tests : `pytest`, `openpyxl`). 100 % local.
+Python 3.10+. Dépendances : `XlsxWriter`, `PyYAML`, `openpyxl` (lecture des classeurs renvoyés ; tests : `pytest`). 100 % local.
 
 ```
 pip install -r requirements.txt            # (+ requirements-dev.txt pour les tests)
@@ -31,7 +31,8 @@ python -m pytest
 
 ## Utilisation simple : `Shine.exe`
 
-Double-clic → une fenêtre demande **le dossier global** (ex. `Liaison`), puis **la date limite de retour** des classeurs
+Double-clic → une petite fenêtre propose deux actions : **mettre en forme des exports** ou **extraire le récapitulatif**
+(voir plus bas). Pour la mise en forme, une fenêtre demande **le dossier global** (ex. `Liaison`), puis **la date limite de retour** des classeurs
 (JJ/MM/AAAA, non passée ; une date est proposée par défaut) → mise en forme → message de fin avec les
 compteurs → le dossier de sortie (`Documents\shine`) s'ouvre. Aucune console, aucune option à connaître.
 Avec des arguments (`Shine.exe --input … --output …`), l'exécutable se comporte comme la ligne de commande
@@ -39,6 +40,22 @@ décrite ci-dessous. Le contact (et l'organisation) se renseignent dans `config.
 elle, est saisie au lancement. Il n'y a qu'**un seul fichier de configuration : `config.yaml`**. Il est embarqué dans `Shine.exe` ; un `config.yaml`
 posé **à côté de `Shine.exe`** le remplace (fusion clé par clé) sans reconstruire l'exécutable : copiez-y le fichier,
 modifiez le contact, la version, `owners`, `show_dn`… Les clés absentes gardent leur valeur par défaut.
+
+### Extraire le récapitulatif d'un classeur renvoyé
+
+Second choix de la fenêtre de lancement : on désigne **un dossier** (comme pour la compilation) contenant les classeurs
+renvoyés par les ayants droit. Shine le parcourt, sous-dossiers compris, et crée **à côté de chaque classeur Shine** un
+fichier `Recap_<nom du classeur>.xlsx`, puis ouvre le dossier. Les autres fichiers Excel, les temporaires `~$…` et les
+`Recap_…` déjà extraits sont ignorés.
+
+Le fichier extrait contient le **bloc de validation** (statut Signé / Non signé, nom, fonction, date, attestation,
+signature), les compteurs d'ajouts et de retraits, et le **tableau de l'onglet Récapitulatif**, en **valeurs figées** (aucune
+formule, aucun lien externe : il reste valable après un envoi par mail). C'est une copie fidèle, sans analyse.
+Les valeurs sont celles **enregistrées par Excel** dans le classeur renvoyé : si l'ayant droit ne l'a pas enregistré, le récapitulatif
+est vide et Shine le signale. Le résumé affiché ne contient que des compteurs et des noms de fichiers, jamais de noms de personnes.
+
+En ligne de commande : `Shine.exe --extract-recap <classeur.xlsx ou dossier> […] [--output <dossier>]`
+(par défaut, à côté de chaque classeur).
 
 ### Construire `Shine.exe` (`build_exe.bat`)
 
@@ -215,7 +232,7 @@ formules de calcul. Le récapitulatif est dérivé : l'ingestion de la phase 2 n
 
 ## Organisation
 
-`shine.py` (lanceur : fenêtre / `.exe`) · `build_exe.bat` · `revue_droits.py` (CLI) · `config.py` / `config.yaml` · `model.py` (dataclasses) · `parser.py` (lecture CSV
+`shine.py` (lanceur : fenêtre / `.exe`) · `extract.py` (extraction du récapitulatif) · `build_exe.bat` · `revue_droits.py` (CLI) · `config.py` / `config.yaml` · `model.py` (dataclasses) · `parser.py` (lecture CSV
 tolérante) · `compiler.py` (parcours, lecture, lignes triées) · `excel.py` (classeurs) · `tests/` (le jeu
 NTFTEST est reconstruit dans `conftest.py` + cas limites : fichier vide, CSV normal, ligne cassée, même
 personne en Full et Read, noms d'onglet > 31 caractères, injection, volume ~30 000 lignes).

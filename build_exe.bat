@@ -5,7 +5,7 @@ rem  Le script verifie d'abord ce qui est DEJA installe et ne telecharge que
 rem  ce qui manque :
 rem    1) Python 3.10+      (sinon : telechargement depuis python.org, installation
 rem                          pour l'utilisateur courant, sans droits administrateur)
-rem    2) XlsxWriter, PyYAML, PyInstaller (sinon : pip install)
+rem    2) XlsxWriter, PyYAML, openpyxl, PyInstaller (sinon : pip install)
 rem    3) Shine.exe         (deja a jour : rien a refaire ; /force pour reconstruire)
 rem  Si tout est deja present, aucune connexion internet n'est necessaire.
 rem ==========================================================================
@@ -50,17 +50,18 @@ if not exist %PY% goto :err_install
 echo      OK : Python est present.
 
 echo.
-echo [2/3] Verification des composants (XlsxWriter, PyYAML, PyInstaller) ...
+echo [2/3] Verification des composants (XlsxWriter, PyYAML, openpyxl, PyInstaller) ...
 set "NEED_RT="
 set "NEED_PI="
 %PY% -c "import sys, xlsxwriter; sys.exit(0 if tuple(int(x) for x in xlsxwriter.__version__.split('.')[:2])>=(3,2) else 1)" >nul 2>&1 || set "NEED_RT=1"
 %PY% -c "import sys, yaml; sys.exit(0 if int(yaml.__version__.split('.')[0])>=6 else 1)" >nul 2>&1 || set "NEED_RT=1"
+%PY% -c "import sys, openpyxl; sys.exit(0 if tuple(int(x) for x in openpyxl.__version__.split('.')[:2])>=(3,1) else 1)" >nul 2>&1 || set "NEED_RT=1"
 %PY% -c "import PyInstaller" >nul 2>&1 || set "NEED_PI=1"
 if not defined NEED_RT if not defined NEED_PI goto :deps_ok
 
 %PY% -m pip --version >nul 2>&1 || %PY% -m ensurepip --upgrade >nul 2>&1
 if not defined NEED_RT goto :skip_rt
-echo      Installation de XlsxWriter / PyYAML ...
+echo      Installation de XlsxWriter / PyYAML / openpyxl ...
 %PY% -m pip install --disable-pip-version-check -r requirements.txt || goto :err_pip
 :skip_rt
 if not defined NEED_PI goto :deps_done
