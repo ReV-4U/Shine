@@ -537,8 +537,12 @@ class BookBuilder:
                 "input_title": "Date de validation", "input_message": msg,
                 "error_title": "Valeur non autorisée", "error_message": "Choisissez une valeur dans la liste."})
         # date retenue : valable seulement si les trois champs sont remplis et forment un jour qui existe (pas de 31 février)
-        month_list = "{" + ",".join(f'"{m}"' for m in months) + "}"
-        d_v, m_v, y_v = f'VALUE({d_}&"")', f"MATCH({m_},{month_list},0)", f'VALUE({y_}&"")'
+        # Numéro du mois déduit du nom, sans constante matricielle ni référence à une autre feuille (que la mise en forme
+        # conditionnelle d'Excel n'accepte pas toujours) : position du nom dans « |Janvier|Février|…| », comptée en « | ».
+        mtxt = "|" + "|".join(months) + "|"
+        mpos = f'FIND("|"&{m_}&"|","{mtxt}")'
+        m_part = f'LEFT("{mtxt}",{mpos})'
+        d_v, m_v, y_v = f'VALUE({d_}&"")', f'(LEN({m_part})-LEN(SUBSTITUTE({m_part},"|","")))', f'VALUE({y_}&"")'
         date_ok = f"IFERROR(AND(COUNTA({d_},{m_},{y_})=3,DAY(DATE({y_v},{m_v},{d_v}))={d_v}),FALSE)"
         ws.conditional_format(top + 2, 2, top + 2, 4, {                  # jour impossible : les trois cases passent en rouge
             "type": "formula", "criteria": f"=AND(COUNTA({d_},{m_},{y_})=3,NOT({date_ok}))",

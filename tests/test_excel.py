@@ -440,7 +440,9 @@ def test_instructions_signature_block(books):
     dv = {str(d.sqref): d for d in ws.data_validations.dataValidation}
     # date : jour | mois | année dans trois listes sur la même ligne (pas de calendrier possible dans un .xlsx)
     assert dv[f"C{top + 2}"].formula1.startswith('"1,2,3') and dv[f"C{top + 2}"].formula1.rstrip('"').endswith("31")
-    assert "01 - Janvier" in dv[f"D{top + 2}"].formula1 and "12 - Décembre" in dv[f"D{top + 2}"].formula1
+    assert dv[f"D{top + 2}"].formula1.startswith('"Janvier,Février') and dv[f"D{top + 2}"].formula1.endswith('Décembre"')
+    assert not any(ch.isdigit() for ch in dv[f"D{top + 2}"].formula1)                  # sans chiffre : Excel ne le convertit pas en date
+    assert 'FIND("|"&D' in status.value and '|Janvier|Février|' in status.value and '{' not in status.value
     assert dv[f"E{top + 2}"].formula1.count(",") == 2
     assert f"C{top + 3}" not in dv                                                           # attestation = case à cocher
     assert not any(d.type == "date" for d in ws.data_validations.dataValidation)
@@ -556,7 +558,7 @@ def test_signature_status_live(ntftest, cfg, tmp_path):
     ws = wb["Instructions"]
     top = frow(ws, "Nom et prénom")
     ws.cell(top, 3).value = "Marie Dupont"
-    ws.cell(top + 2, 3).value, ws.cell(top + 2, 4).value, ws.cell(top + 2, 5).value = 20, "11 - Novembre", 2026
+    ws.cell(top + 2, 3).value, ws.cell(top + 2, 4).value, ws.cell(top + 2, 5).value = 20, "Novembre", 2026
     ws.cell(top + 3, 3).value = True
     src = tmp_path / "s.xlsx"
     wb.save(src)
@@ -566,11 +568,11 @@ def test_signature_status_live(ntftest, cfg, tmp_path):
     wb.save(src)
     got = _recalc(src, tmp_path)
     assert got["Instructions"].cell(top + 5, 3).value == "Signé"
-    ws.cell(top + 2, 3).value, ws.cell(top + 2, 4).value = 31, "02 - Février"             # date impossible
+    ws.cell(top + 2, 3).value, ws.cell(top + 2, 4).value = 31, "Février"             # date impossible
     wb.save(src)
     got = _recalc(src, tmp_path)
     assert got["Instructions"].cell(top + 5, 3).value == "Non signé"
-    ws.cell(top + 2, 3).value, ws.cell(top + 2, 4).value, ws.cell(top + 2, 5).value = 20, "11 - Novembre", None   # année manquante
+    ws.cell(top + 2, 3).value, ws.cell(top + 2, 4).value, ws.cell(top + 2, 5).value = 20, "Novembre", None   # année manquante
     wb.save(src)
     got = _recalc(src, tmp_path)
     assert got["Instructions"].cell(top + 5, 3).value == "Non signé"
