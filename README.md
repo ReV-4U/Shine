@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/shine_logo_1024.png" alt="Logo Shine : un S rose style graffiti" width="160"></p>
+
 # Shine — mise en forme des exports de droits pour revue
 
 Transforme des exports Active Directory (CSV de membres de groupes) en **un classeur Excel soigné par

@@ -6,6 +6,7 @@
 import os
 
 ROOT = SPECPATH  # dossier de ce fichier
+ICON = os.path.join(ROOT, 'assets', 'shine.ico')  # icone de Shine.exe (ignoree si le fichier est absent)
 
 a = Analysis(
     [os.path.join(ROOT, 'shine.py')],
@@ -36,6 +37,7 @@ exe = EXE(
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
+    icon=ICON if os.path.exists(ICON) else None,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
