@@ -26,18 +26,18 @@ from dataclasses import dataclass, field
 import xlsxwriter
 from xlsxwriter.utility import xl_col_to_name, xl_rowcol_to_cell
 
-from model import FULL, READ, Book, ResourceData, ScopeData
+from model import FULL, NONE, READ, Book, ResourceData, ScopeData
 
-SCHEMA_VERSION = 4
-TOOL_VERSION = "2.2.0"
+SCHEMA_VERSION = 5
+TOOL_VERSION = "2.3.0"
 
-LEVEL_LABELS = {FULL: "Modification", READ: "Lecture"}
+LEVEL_LABELS = {FULL: "Modification", READ: "Lecture", NONE: "Non précisé"}
 ADD_COLS = ("Nom", "Identifiant (optionnel)", "Groupe de ressource", "Justification")   # tableau « Personnes à ajouter » (Synthèse)
 ADD_GROUP_SPAN = (2, 4)      # colonnes C:E fusionnées par ligne (liste « Groupe de ressource »), valeur lue en C
 ADD_JUSTIF_SPAN = (5, 7)     # colonnes F:H fusionnées par ligne, valeur lue en F
 # colonnes de l'onglet _meta (contrat phase 2) ; les blocs sont placés côte à côte
 META_SHEETS = ["sheet", "folder", "subpath", "resource", "group_full", "group_read", "header_row", "first_data_row",
-               "last_data_row", "n_rows", "comment_cell", "decision_cols", "key_col", "data_hash"]
+               "last_data_row", "n_rows", "comment_cell", "decision_cols", "key_col", "data_hash", "group_other"]
 META_ROWS = ["sheet", "key", "sam", "level", "initial_row"]
 META_GROUPS = ["group", "sheet", "folder", "subpath", "resource", "level", "file", "owner"]
 META_C0 = 3
@@ -140,7 +140,7 @@ def _group_name(g) -> str:
 
 
 def _rows_for_hash(scope: ScopeData, res: ResourceData) -> list[str]:
-    out = [f"R|{scope.name}|{res.subpath}|{res.name}|{_group_name(res.full)}|{_group_name(res.read)}"]
+    out = [f"R|{scope.name}|{res.subpath}|{res.name}|{_group_name(res.full)}|{_group_name(res.read)}|{_group_name(res.other)}"]
     for p in res.rows:
         out.append("|".join((p.key, p.sam, p.name, p.dn, p.level)))
     return out
@@ -202,17 +202,23 @@ class BookBuilder:
         ws_syn = wb.add_worksheet(SHEET_SYN)
         ws_recap = wb.add_worksheet(SHEET_RECAP)
 
-        # un nom de ressource présent dans plusieurs dossiers du classeur est suffixé par le code du dossier
-        counts: dict[str, int] = {}
+        # Nom d'onglet : le nom de la ressource, suffixé par le code du dossier d'export quand le même nom existe dans
+        # plusieurs dossiers du classeur, et par le sous-dossier (Alpha, Beta, Gamma…) quand la ressource en vient.
+        counts: dict[str, set[str]] = {}
         for s in self.book.scopes:
             for r in s.resources:
-                counts[r.name.casefold()] = counts.get(r.name.casefold(), 0) + 1
+                counts.setdefault(r.name.casefold(), set()).add(s.name)
         infos: list[SheetInfo] = []
         for s in self.book.scopes:
             for r in s.resources:
+                parts = []
+                if len(counts[r.name.casefold()]) > 1:
+                    parts.append(s.code or s.label)
+                if r.subpath:
+                    parts.append(r.subpath.replace("/", "-"))
                 base = r.name
-                if counts[r.name.casefold()] > 1:
-                    tag = "_" + (s.code or s.label)
+                if parts:
+                    tag = "_" + "_".join(parts)
                     base = r.name[: max(1, 31 - len(tag))] + tag
                 infos.append(SheetInfo(make_sheet_name(base, self.used_names), s, r))
         self.add_title = syn_layout(len(infos))[3]
@@ -252,7 +258,7 @@ class BookBuilder:
         multi = len(self.book.scopes) > 1
         out, seen = [], set()
         for info in infos:
-            for lvl, g in ((FULL, info.res.full), (READ, info.res.read)):
+            for lvl, g in ((FULL, info.res.full), (READ, info.res.read), (NONE, info.res.other)):
                 if g is None:
                     continue
                 parts = ([info.scope.name] if multi else []) + ([info.res.subpath] if info.res.subpath else []) + [g.stem]
@@ -330,7 +336,11 @@ class BookBuilder:
             if g.error:
                 return f"{label} : {g.stem} (fichier illisible)"
             return f"{label} : {g.stem} ({len(g.members)})"
-        groups_txt = safe(f"{lvl(res.full, 'Modification')}   ·   {lvl(res.read, 'Lecture')}")
+        if res.other is not None:
+            groups_txt = safe(f"{lvl(res.other, 'Droit non précisé')}" + ("" if res.full is None and res.read is None else
+                              f"   ·   {lvl(res.full, 'Modification')}   ·   {lvl(res.read, 'Lecture')}"))
+        else:
+            groups_txt = safe(f"{lvl(res.full, 'Modification')}   ·   {lvl(res.read, 'Lecture')}")
         ws.merge_range(2, 1, 2, c_com - 1, groups_txt, F(text_wrap=True, valign="top"))   # en-tête : hors zone de données
         if len(groups_txt) > 46:
             ws.set_row(2, 28)
@@ -641,11 +651,15 @@ class BookBuilder:
     def _synthese(self, ws, infos: list[SheetInfo]):
         F, c = self.F, self.c
         ws.hide_gridlines(2)
-        heads = ["Ressource", "Dossier", "Membres Full", "Membres Read", "Lignes à traiter",
-                 "Traitées", "Reste", "Avancement"]
+        # colonne « droit non précisé » seulement si le classeur contient des fichiers sans suffixe _Full / _Read (Delta.csv…)
+        x = 1 if any(i.res.other is not None for i in infos) else 0
+        self.syn_extra = x
+        heads = ["Ressource", "Dossier", "Membres Full", "Membres Read"] + (["Membres (droit non précisé)"] if x else []) + [
+            "Lignes à traiter", "Traitées", "Reste", "Avancement"]
+        cR, cD = xl_col_to_name(4 + x), xl_col_to_name(5 + x)      # lettres des colonnes « Lignes à traiter » et « Traitées »
         widths = [max([len(i.res.name) for i in infos] + [24]) + 4,
-                  max([len(i.scope.name) for i in infos] + [len(g["group"]) for g in self.groups] + [22]) + 2,
-                  13, 13, 14, 11, 10, 12]
+                  max([len(i.scope.name) + (len(i.res.subpath) + 3 if i.res.subpath else 0) for i in infos] + [len(g["group"]) for g in self.groups] + [22]) + 2,
+                  13, 13] + ([16] if x else []) + [14, 11, 10, 12]
         for j, wd in enumerate(widths):
             ws.set_column(j, j, min(wd, 48))
         ws.write_string(0, 0, f"Synthèse – {self.book.label} – {self.period}", F(bold=True, font_size=15, font_color=c["title"]))
@@ -654,7 +668,7 @@ class BookBuilder:
         first, last, _tr, _at = syn_layout(len(infos))
         total_lines = sum(i.n_rows for i in infos)
         ws.write_string(1, 0, "Progression globale", F(bold=True, font_color=c["title"]))
-        ws.write_formula(1, 1, f'=IFERROR(SUM(F{first + 1}:F{last + 1})/SUM(E{first + 1}:E{last + 1}),"—")',
+        ws.write_formula(1, 1, f'=IFERROR(SUM({cD}{first + 1}:{cD}{last + 1})/SUM({cR}{first + 1}:{cR}{last + 1}),"—")',
                          F(bold=True, num_format="0%", align="left"), 0 if total_lines else "—")
         ws.write_string(2, 0, "Une ligne = une ligne d'un export. « Traitées » = Oui ou Non (ou une case cochée) ; vide = non traité.",
                         F(italic=True, font_color="#595959"))
@@ -672,20 +686,20 @@ class BookBuilder:
             res = info.res
             sn = _sq(info.name)
             ws.write_url(r, 0, f"internal:'{sn}'!A1", link, safe(res.name)[:255], f"Aller à l'onglet {info.name}")
-            ws.write_string(r, 1, safe(info.scope.name), txt)
-            for j, lvl in ((2, FULL), (3, READ)):
+            ws.write_string(r, 1, safe(info.scope.name + (f" / {info.res.subpath}" if info.res.subpath else "")), txt)
+            for j, lvl in ((2, FULL), (3, READ)) + (((4, NONE),) if x else ()):
                 v = res.count(lvl)
                 ws.write_string(r, j, "illisible", num) if v is None else ws.write_number(r, j, v, num)
-            ws.write_number(r, 4, info.n_rows, num)
+            ws.write_number(r, 4 + x, info.n_rows, num)
             f0, l0 = info.first + 1, info.last + 1
             rng = lambda col, s=sn, a=f0, b=l0: f"'{s}'!${xl_col_to_name(col)}${a}:${xl_col_to_name(col)}${b}"  # noqa: E731
             if info.n_rows == 0:
-                ws.write_number(r, 5, 0, num)
+                ws.write_number(r, 5 + x, 0, num)
             else:
-                ws.write_formula(r, 5, self._treated_formula(rng, info.dec_cols), num, 0)
+                ws.write_formula(r, 5 + x, self._treated_formula(rng, info.dec_cols), num, 0)
             R = r + 1
-            ws.write_formula(r, 6, f"=E{R}-F{R}", num, info.n_rows)
-            ws.write_formula(r, 7, f'=IF(E{R}=0,"—",F{R}/E{R})', pct, 0 if info.n_rows else "—")
+            ws.write_formula(r, 6 + x, f"={cR}{R}-{cD}{R}", num, info.n_rows)
+            ws.write_formula(r, 7 + x, f'=IF({cR}{R}=0,"—",{cD}{R}/{cR}{R})', pct, 0 if info.n_rows else "—")
         if not infos:
             ws.write_string(first, 0, "Aucune ressource", F(italic=True, **bd))
         # ligne de total : cellules ordinaires juste sous le tableau (SUBTOTAL respecte les filtres)
@@ -695,11 +709,13 @@ class BookBuilder:
         ws.write_string(tr, 0, "Total", F(bold=True, **tb))
         ws.write_blank(tr, 1, None, tot)
         cached = {2: sum(i.res.count(FULL) or 0 for i in infos), 3: sum(i.res.count(READ) or 0 for i in infos),
-                  4: total_lines, 5: 0, 6: total_lines}
-        for j in range(2, 7):
+                  4 + x: total_lines, 5 + x: 0, 6 + x: total_lines}
+        if x:
+            cached[4] = sum(i.res.count(NONE) or 0 for i in infos)
+        for j in range(2, 7 + x):
             col = xl_col_to_name(j)
             ws.write_formula(tr, j, f"=SUBTOTAL(109,{col}{first + 1}:{col}{last + 1})", tot, cached[j])
-        ws.write_formula(tr, 7, f'=IF(E{TR}=0,"—",F{TR}/E{TR})', F(num_format="0%", align="center", bold=True, **tb),
+        ws.write_formula(tr, 7 + x, f'=IF({cR}{TR}=0,"—",{cD}{TR}/{cR}{TR})', F(num_format="0%", align="center", bold=True, **tb),
                          0 if total_lines else "—")
 
         # ---- tableau « Personnes à ajouter » (sous le total) : une ligne = une personne et le groupe (fichier CSV) visé
@@ -709,13 +725,13 @@ class BookBuilder:
                                    "concerné (à choisir dans la liste) et la justification. Le droit (Lecture ou Modification) "
                                    "se déduit du groupe choisi.", F(italic=True, font_color="#595959"))
         h = at + 2
-        (g0, g1), (j0, j1) = ADD_GROUP_SPAN, ADD_JUSTIF_SPAN
+        (g0, g1), (j0, j1) = ADD_GROUP_SPAN, (ADD_JUSTIF_SPAN[0], ADD_JUSTIF_SPAN[1] + x)
         assert j1 == len(heads) - 1
         self.add_header_row = h
         ws.write_string(h, 0, ADD_COLS[0], self._hdr(input_col=True))
         ws.write_string(h, 1, ADD_COLS[1], self._hdr(input_col=True))
         ws.merge_range(h, g0, h, g1, ADD_COLS[2], self._hdr(input_col=True))           # groupe : C:E (valeur lue en C)
-        ws.merge_range(h, j0, h, j1, ADD_COLS[3], self._hdr(input_col=True))           # justification : F:H (valeur lue en F)
+        ws.merge_range(h, j0, h, j1, ADD_COLS[3], self._hdr(input_col=True))           # justification : F:H (F:I avec la colonne « droit non précisé »), valeur lue en F
         na = self.cfg["excel"]["add_rows"]
         self.add_first, self.add_last = h + 1, h + na
         add_fmt = F(locked=False, bg_color=c["input_bg"], border=1, border_color=c["input_border"], text_wrap=True)
@@ -873,7 +889,7 @@ class BookBuilder:
             if ng:
                 meta = lambda k: f"'_meta'!${gcol(k)}$2:${gcol(k)}${ng + 1}"   # noqa: E731
                 m = f"MATCH(L{r + 1},{meta('group')},0)"
-                ws.write_formula(r, 13, f'=IFERROR(IF(INDEX({meta("level")},{m})="{FULL}","{LEVEL_LABELS[FULL]}","{LEVEL_LABELS[READ]}"),"")', F(), "")
+                ws.write_formula(r, 13, f'=IFERROR(IF(INDEX({meta("level")},{m})="{FULL}","{LEVEL_LABELS[FULL]}",IF(INDEX({meta("level")},{m})="{NONE}","{LEVEL_LABELS[NONE]}","{LEVEL_LABELS[READ]}")),"")', F(), "")
                 ws.write_formula(r, 14, f'=IFERROR(INDEX({meta("owner")},{m}),"{_q(single)}")', F(), single)
             else:
                 ws.write_string(r, 13, "", F())
@@ -933,7 +949,7 @@ class BookBuilder:
             dec = ",".join(xl_col_to_name(x) for x in info.dec_cols)
             vals = [info.name, info.scope.name, info.res.subpath, info.res.name, _group_name(info.res.full),
                     _group_name(info.res.read), info.header_row + 1, info.first + 1, info.last + 1, info.n_rows,
-                    info.comment_cell, dec, xl_col_to_name(info.key_col), info.data_hash]
+                    info.comment_cell, dec, xl_col_to_name(info.key_col), info.data_hash, _group_name(info.res.other)]
             for j, v in enumerate(vals):
                 (ws.write_number if isinstance(v, int) else ws.write_string)(i, c0 + j, v if isinstance(v, int) else safe(v), F())
         # bloc 3 : lignes (clé stable → ligne initiale)

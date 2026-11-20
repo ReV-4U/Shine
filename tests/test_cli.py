@@ -32,13 +32,20 @@ def test_end_to_end_ntftest(ntftest, tmp_path, capsys):
     assert sum(1 for _ in wb["Activites_etudes"].tables) == 1
 
 
+def ignore_cfg(tmp_path):
+    """Config qui écarte (et signale) les fichiers sans suffixe _Full / _Read, au lieu de les traiter en « droit non précisé »."""
+    f = tmp_path / "ignore.yaml"
+    f.write_text("resources:\n  unsuffixed: ignore\n", encoding="utf-8")
+    return str(f)
+
+
 def test_read_report_only_when_needed(tmp_path, capsys):
     root = tmp_path / "in"
     p = write_export(root / "Export_A.Un" / "R_Full.csv", [("A A", dn_user("A A"), "aa")])
     p.write_bytes(p.read_bytes() + b"ligne cassee\r\n")
     write_export(root / "Export_A.Un" / "Machin.csv", [("B B", dn_user("B B"), "bb")])
     out = tmp_path / "out"
-    rc, cap = run(["--input", str(root), "--output", str(out)], capsys)
+    rc, cap = run(["--input", str(root), "--output", str(out), "--config", ignore_cfg(tmp_path)], capsys)
     raw = (out / RAPPORT).read_bytes()
     assert rc == 0 and raw.startswith(b"\xef\xbb\xbf")
     rows = list(csv.reader(raw.decode("utf-8-sig").splitlines(), delimiter=";"))
@@ -47,7 +54,7 @@ def test_read_report_only_when_needed(tmp_path, capsys):
     assert "Problèmes de lecture : 2" in cap.out and RAPPORT in cap.out
     p.write_bytes(p.read_bytes().replace(b"ligne cassee\r\n", b""))
     (root / "Export_A.Un" / "Machin.csv").unlink()
-    run(["--input", str(root), "--output", str(out)], capsys)
+    run(["--input", str(root), "--output", str(out), "--config", ignore_cfg(tmp_path)], capsys)
     assert not (out / RAPPORT).exists()               # pas de rapport périmé
 
 
@@ -56,10 +63,10 @@ def test_output_inside_input_can_be_rerun(tmp_path, capsys):
     write_export(root / "Export_A.Un" / "R_Full.csv", [("A A", dn_user("A A"), "aa")])
     p = write_export(root / "Export_A.Un" / "Machin.csv", [("B B", dn_user("B B"), "bb")])
     out = root / "sortie"
-    run(["--input", str(root), "--output", str(out)], capsys)
+    run(["--input", str(root), "--output", str(out), "--config", ignore_cfg(tmp_path)], capsys)
     assert (out / RAPPORT).exists()
     p.unlink()
-    rc, cap = run(["--input", str(root), "--output", str(out)], capsys)     # le rapport précédent n'est pas relu comme export
+    rc, cap = run(["--input", str(root), "--output", str(out), "--config", ignore_cfg(tmp_path)], capsys)     # le rapport précédent n'est pas relu comme export
     assert rc == 0 and "Problèmes de lecture : 0" in cap.out and not (out / RAPPORT).exists()
 
 
@@ -93,7 +100,7 @@ def test_user_config_overrides(ntftest, tmp_path, capsys):
 def test_csv_injection_in_read_report(tmp_path, capsys):
     root = tmp_path / "in"
     write_export(root / "Export_A.Un" / "=evil.csv", [("x", dn_user("x"), "x")])
-    run(["--input", str(root), "--output", str(tmp_path / "o")], capsys)
+    run(["--input", str(root), "--output", str(tmp_path / "o"), "--config", ignore_cfg(tmp_path)], capsys)
     text = (tmp_path / "o" / RAPPORT).read_text("utf-8-sig")
     assert "'=evil" in text and ";=evil" not in text
 

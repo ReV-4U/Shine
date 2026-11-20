@@ -12,7 +12,8 @@ from dataclasses import dataclass, field
 
 FULL = "full"
 READ = "read"
-LEVELS = (FULL, READ)
+NONE = "none"          # fichier sans suffixe _Full / _Read : le droit n'est pas précisé
+LEVELS = (FULL, READ, NONE)
 
 
 @dataclass(frozen=True)
@@ -48,13 +49,13 @@ class Person:
     sam: str
     name: str
     dn: str
-    level: str                   # FULL | READ
+    level: str                   # FULL | READ | NONE
     key: str                     # clé stable (voir compiler.row_key)
 
 
 @dataclass
 class GroupFile:
-    level: str                   # FULL | READ
+    level: str                   # FULL | READ | NONE
     resource: str                # nom de la ressource tel qu'écrit dans le fichier
     rel_path: str                # chemin relatif à l'entrée
     stem: str                    # nom de fichier sans extension
@@ -71,10 +72,11 @@ class ResourceData:
     full: GroupFile | None
     read: GroupFile | None
     rows: list[Person] = field(default_factory=list)
+    other: GroupFile | None = None   # fichier sans suffixe de niveau (droit non précisé)
 
     def count(self, level: str) -> int | None:
         """Nombre de lignes du groupe ; None si le fichier est illisible."""
-        g = self.full if level == FULL else self.read
+        g = self.full if level == FULL else self.read if level == READ else self.other
         if g is None:
             return 0
         return None if g.error else len(g.members)

@@ -29,6 +29,8 @@ resources:
   # Suffixes de niveau, insensibles à la casse. La ressource = nom privé du suffixe.
   suffix_full: '_Full'
   suffix_read: '_Read'
+  # Fichier sans suffixe (ex. Delta.csv) : unknown = traité avec le droit « Non précisé » ; ignore = ignoré et signalé
+  unsuffixed: unknown
 
 excel:
   # dropdown : liste Oui / Non (une colonne, compatible partout)

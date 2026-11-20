@@ -21,7 +21,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
-from model import (FULL, LEVELS, READ, Book, CompileResult, GroupFile, Person, ReadProblem,
+from model import (FULL, LEVELS, NONE, READ, Book, CompileResult, GroupFile, Person, ReadProblem,
                    ResourceData, ScopeData)
 from parser import parse_file
 
@@ -85,20 +85,24 @@ def discover(root: Path, cfg: dict, problems: list[ReadProblem], exclude: Path |
             scope_dir = _find_scope(d, root, pattern)
             stem = fn[:-4]
             m = suffix.match(stem)
-            if not m:
+            if m:
+                level = FULL if m.group("suf").casefold() == cfg["resources"]["suffix_full"].casefold() else READ
+                res = m.group("res")
+            elif str(cfg["resources"].get("unsuffixed", "unknown")).lower() == "unknown":
+                level, res = NONE, stem          # ex. Delta.csv : traité, avec le droit « Non précisé »
+            else:
                 problems.append(ReadProblem("SUFFIXE_INCONNU", scope_dir.name, stem, rel,
                                             "fichier ignoré : le nom ne se termine ni par _Full ni par _Read"))
                 continue
-            level = FULL if m.group("suf").casefold() == cfg["resources"]["suffix_full"].casefold() else READ
             sub = d.relative_to(scope_dir).as_posix()
             sub = "" if sub == "." else sub
-            ident = (str(scope_dir), sub, m.group("res").casefold(), level)
+            ident = (str(scope_dir), sub, res.casefold(), level)
             if ident in seen:
-                problems.append(ReadProblem("DOUBLON_FICHIER", scope_dir.name, m.group("res"), rel,
+                problems.append(ReadProblem("DOUBLON_FICHIER", scope_dir.name, res, rel,
                                             "deux fichiers pour le même groupe (casse différente) : le premier est conservé"))
                 continue
             seen.add(ident)
-            out.append(FileRef(p, rel, scope_dir, sub, level, m.group("res"), stem))
+            out.append(FileRef(p, rel, scope_dir, sub, level, res, stem))
     return out
 
 
@@ -150,7 +154,7 @@ def _read_group(ref: FileRef, problems: list[ReadProblem], scope: str, resource:
 
 def _build_rows(scope_name: str, subpath: str, name: str, groups: list[GroupFile | None]) -> list[Person]:
     rows: list[Person] = []
-    for g in groups:                          # Full puis Read : aucune fusion entre les deux
+    for g in groups:                          # Full, Read puis niveau non précisé : aucune fusion entre eux
         if g is None or g.error:
             continue
         seen: Counter = Counter()
@@ -158,7 +162,7 @@ def _build_rows(scope_name: str, subpath: str, name: str, groups: list[GroupFile
             k = m.sam.casefold()
             seen[k] += 1
             rows.append(Person(m.sam, m.name, m.dn, g.level, row_key(scope_name, subpath, name, g.level, m.sam, seen[k])))
-    # tri stable et déterministe : droit (Modification puis Lecture), nom, identifiant
+    # tri stable et déterministe : droit (Modification, Lecture, non précisé), nom, identifiant
     rank = {l: i for i, l in enumerate(LEVELS)}
     rows.sort(key=lambda p: (rank[p.level], p.name.casefold(), p.sam.casefold()))
     return rows
@@ -202,10 +206,11 @@ def compile_all(root: str | Path, cfg: dict, only: list[str] | None = None,
         for r in files:
             groups[(r.subpath, r.resource.casefold())][r.level] = r
         for (sub, _cf), lv in sorted(groups.items(), key=lambda kv: (kv[0][0].casefold(), kv[0][1])):
-            name = (lv.get(FULL) or lv.get(READ)).resource
+            name = (lv.get(FULL) or lv.get(READ) or lv.get(NONE)).resource
             gf = _read_group(lv[FULL], problems, scope.name, name, stats) if FULL in lv else None
             gr = _read_group(lv[READ], problems, scope.name, name, stats) if READ in lv else None
-            res = ResourceData(scope.name, sub, name, gf, gr, _build_rows(scope.name, sub, name, [gf, gr]))
+            go = _read_group(lv[NONE], problems, scope.name, name, stats) if NONE in lv else None
+            res = ResourceData(scope.name, sub, name, gf, gr, _build_rows(scope.name, sub, name, [gf, gr, go]), go)
             scope.resources.append(res)
             stats["resources"] += 1
             stats["rows"] += len(res.rows)

@@ -103,8 +103,13 @@ si `owners:` regroupe plusieurs dossiers. Relancer le même jour écrase les fic
 * Dossiers `Export_<X>.<Nom>` (motif `input.folder_pattern`) ; un classeur par dossier. Pour regrouper
   plusieurs dossiers d'un même ayant droit : `owners:` (dossier → libellé). Les onglets de même nom sont alors
   suffixés par le code dossier ; rien n'est jamais fusionné.
+  Un code de plusieurs lettres (`Export_ABC.Nom`) est accepté. Les fichiers placés dans des **sous-dossiers** d'un export
+  (`Export_E.Nom/Alpha/`, `Beta/`…) sont traités : un onglet par ressource et par sous-dossier, nommé
+  `<Ressource>_<sous-dossier>` (ex. `Res1_Alpha`) ; le sous-dossier figure dans « Dossier d'origine » et dans la Synthèse.
 * Fichiers `<Ressource>_Full.csv` (droit « Modification ») et `<Ressource>_Read.csv` (« Lecture »).
-  Autre suffixe : ignoré et signalé dans `rapport_lecture.csv`.
+  Un fichier **sans suffixe** (ex. `Alpha.csv`, `Beta.csv`) est traité comme une ressource au nom du fichier, avec le droit
+  « **Non précisé** » (Shine ne suppose rien) ; la Synthèse ajoute alors la colonne « Membres (droit non précisé) ».
+  `resources.unsuffixed: ignore` revient à l'ancien comportement (fichier ignoré et signalé dans `rapport_lecture.csv`).
 * Format : les exports sont des CSV « doublement quotés » (chaque ligne est un champ unique qui contient du
   CSV) ; le parseur fait un double parsing et détecte aussi un CSV normal (`,` `;` tabulation). UTF-8 avec BOM,
   repli cp1252. Un fichier de 5 octets est un groupe vide : la ressource affiche « Aucun membre ».
@@ -195,14 +200,14 @@ formules de calcul. Le récapitulatif est dérivé : l'ingestion de la phase 2 n
   `sha1(dossier | sous-dossier | ressource | niveau | identifiant | n° d'occurrence)[:16]`, casse ignorée,
   indépendante du chemin d'entrée. Le niveau (`full` / `read`) et le numéro d'occurrence font que deux lignes
   identiques d'un même fichier gardent des clés distinctes.
-* `_meta` (schéma v4) contient quatre tableaux Excel : `MetaKV_*` (`schema_version`, `tool_version`,
+* `_meta` (schéma v5) contient quatre tableaux Excel : `MetaKV_*` (`schema_version`, `tool_version`,
   `generated_at`, `period`, `workbook_label`, `folders`, `export_dates`, `checkbox_mode`, `decision_values`,
   `n_resources`, `n_rows`, `data_hash`, `row_key`, et pour le tableau d'ajout : `add_sheet`, `add_header_row`,
   `add_first_row`, `add_last_row`, `add_col_name`, `add_col_sam`, `add_col_group`, `add_col_justification` ; pour l'en-tête et le récapitulatif :
   `cover_sheet`, `cover_history_rows`, `signature_sheet`, `signature_cells`, `recap_sheet`, `recap_header_row`, `recap_first_row`,
   `recap_last_row`, `recap_note`) ; `MetaSheets_*` (`sheet, folder, subpath, resource,
   group_full, group_read, header_row, first_data_row, last_data_row, n_rows, comment_cell, decision_cols, key_col,
-  data_hash`) ; `MetaRows_*` (`sheet, key, sam, level, initial_row`) ; `MetaGroups_*` (`group, sheet, folder,
+  data_hash, group_other`) ; `MetaRows_*` (`sheet, key, sam, level, initial_row`) ; `MetaGroups_*` (`group, sheet, folder,
   subpath, resource, level, file, owner` : source de la liste « Groupe de ressource »).
 * Un classeur dont `schema_version` ou `data_hash` ne correspond pas à l'export de référence doit être refusé.
 

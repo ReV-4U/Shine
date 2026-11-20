@@ -221,7 +221,7 @@ def test_meta_contract(books):
     wb = openpyxl.load_workbook(books["E.Test7"])
     meta = wb["_meta"]
     kv = {r[0].value: r[1].value for r in meta[get_table(meta, "MetaKV").ref] if r[0].value}
-    assert kv["schema_version"] == "4" and kv["folders"] == "Export_E.Test7" and kv["checkbox_mode"] == "dropdown"
+    assert kv["schema_version"] == "5" and kv["folders"] == "Export_E.Test7" and kv["checkbox_mode"] == "dropdown"
     assert kv["generated_at"] == "2026-11-19T10:00:00" and kv["n_rows"] == "14" and len(kv["data_hash"]) == 64
     syn = wb["Synthèse"]
     assert kv["add_sheet"] == "Synthèse" and syn.cell(int(kv["add_header_row"]), 1).value == "Nom"
@@ -377,7 +377,7 @@ def test_cover_sheet(books):
     assert [ws.cell(10, c).value for c in range(2, 9)] == ["Auteur", "Date", "Version", "Nature de la modification",
                                                            "Approbation", "Validation", "Status"]
     assert ws["B11"].value == "Shine (génération automatique)" and ws["C11"].value == dt.datetime(2026, 11, 19)
-    assert ws["D11"].value == "1.0" and "Création du classeur" in ws["E11"].value and "Shine v2.2.0" in ws["E11"].value
+    assert ws["D11"].value == "1.0" and "Création du classeur" in ws["E11"].value and "Shine v2.3.0" in ws["E11"].value
     assert ws["G11"].value == "='Instructions'!$C$" + str(frow(openpyxl.load_workbook(books["E.Test7"])["Instructions"],
                                                             "Statut de la validation")) and ws["H11"].value == "Émis"
     assert ws["B11"].fill.fgColor.rgb.endswith("CFE2F3")
@@ -578,3 +578,74 @@ def test_signature_status_live(ntftest, cfg, tmp_path):
     wb.save(src)
     got = _recalc(src, tmp_path)
     assert got["En-tête"]["G11"].value == "Signé"                                          # repris dans le tableau « Mise à jour »
+
+
+def test_sous_dossiers_distingues(cfg, tmp_path):
+    """Des sous-dossiers (Alpha, Beta, Gamma…) dans un export donnent des onglets distincts, nommés d'après le sous-dossier."""
+    body = '﻿"name,""distinguishedName"",""SamAccountName"""\n"AAAA BBBB,""CN=BBBB AAAA,OU=T,DC=TEST,DC=COM"",""KKK"""\n'
+    root = tmp_path / "in"
+    for sub in ("Delta", "Gamma", "Alpha", "Beta"):
+        for lvl in ("Full", "Read"):
+            f = root / "Export_E.Martin" / sub / f"Res1_{lvl}.csv"
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(body, encoding="utf-8", newline="")
+    (root / "Export_E.Martin" / "Autre_Full.csv").write_text(body, encoding="utf-8", newline="")
+    _, paths = build_all(root, cfg, tmp_path / "out")
+    wb = openpyxl.load_workbook(paths["E.Martin"])
+    names = [n for n in wb.sheetnames if n not in ("En-tête", "Instructions", "Synthèse", "Récapitulatif", "_calc", "_meta")]
+    assert sorted(names) == ["Autre", "Res1_Alpha", "Res1_Beta", "Res1_Delta", "Res1_Gamma"]
+    assert wb["Res1_Delta"]["B2"].value == "Export_E.Martin / Delta"
+    syn = [r for r in wb["Synthèse"].iter_rows(min_row=5, max_row=9, values_only=True) if r[0]]
+    assert sorted(r[1] for r in syn if r[0] == "Res1") == ["Export_E.Martin / Alpha", "Export_E.Martin / Beta",
+                                                          "Export_E.Martin / Delta", "Export_E.Martin / Gamma"]
+
+
+def _unsuffixed_root(tmp_path):
+    root = tmp_path / "in_ns"
+    d = root / "Export_E.Un"
+    write_export(d / "Delta.csv", [("A A", dn_user("A A"), "aa"), ("B B", dn_user("B B"), "bb")])
+    write_export(d / "Beta.csv", [("C C", dn_user("C C"), "cc")])
+    write_export(d / "Res_Full.csv", [("A A", dn_user("A A"), "aa")])
+    return root
+
+
+def test_no_unspecified_column_without_unsuffixed_files(books):
+    syn = openpyxl.load_workbook(books["E.Test7"])["Synthèse"]
+    assert [c.value for c in syn[4]][:8] == ["Ressource", "Dossier", "Membres Full", "Membres Read", "Lignes à traiter",
+                                              "Traitées", "Reste", "Avancement"]
+
+
+def test_unsuffixed_files_in_workbook(cfg, tmp_path):
+    """Delta.csv / Beta.csv : onglets avec « Non précisé », colonne dédiée dans la Synthèse (absente sinon)."""
+    _, paths = build_all(_unsuffixed_root(tmp_path), cfg, tmp_path / "out")
+    wb = openpyxl.load_workbook(paths["E.Un"])
+    assert wb["Delta"]["C7"].value == "Non précisé" and wb["Delta"]["C8"].value == "Non précisé"
+    assert "Droit non précisé : Delta (2)" in wb["Delta"]["B3"].value
+    syn = wb["Synthèse"]
+    assert [c.value for c in syn[4]][:9] == ["Ressource", "Dossier", "Membres Full", "Membres Read",
+                                              "Membres (droit non précisé)", "Lignes à traiter", "Traitées", "Reste", "Avancement"]
+    rows = {r[0]: r for r in syn.iter_rows(min_row=5, max_row=7, values_only=True)}
+    assert rows["Delta"][2:6] == (0, 0, 2, 2) and rows["Beta"][2:6] == (0, 0, 1, 1) and rows["Res"][2:6] == (1, 0, 0, 1)
+    assert syn["E8"].value.startswith("=SUBTOTAL(109,E5:E7") and syn["F8"].value.startswith("=SUBTOTAL(109,F5:F7")
+
+
+@pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice absent")
+def test_unsuffixed_recap_live(cfg, tmp_path):
+    _, paths = build_all(_unsuffixed_root(tmp_path), cfg, tmp_path / "out")
+    wb = openpyxl.load_workbook(paths["E.Un"])
+    q = wb["Delta"]
+    q["D7"], q["E7"] = "Non", "Départ"
+    syn = wb["Synthèse"]
+    first_add = next(r for r in range(1, 60) if syn.cell(r, 1).value == "Nom") + 1
+    syn.cell(first_add, 1).value, syn.cell(first_add, 2).value, syn.cell(first_add, 3).value = "Jean Test", "jt", "Beta"
+    syn.cell(first_add, 6).value = "Besoin"
+    src = tmp_path / "f.xlsx"
+    wb.save(src)
+    w = _recalc(src, tmp_path)
+    r = w["Récapitulatif"]
+    got = [list(row[:7]) for row in r.iter_rows(min_row=8, max_row=9, values_only=True)]
+    assert got[0][:6] == ["Ajout", "E.Un", "Jean Test", "jt", "Non précisé", "Besoin"]
+    assert got[1][:5] == ["Retrait", "E.Un", "A A", "aa", "Aucun (retrait)"]
+    s = w["Synthèse"]
+    assert [s.cell(r, 7).value for r in (5, 6, 7)] == [0, 1, 0]                          # « Traitées » : une ligne de Delta traitée
+    assert [s.cell(8, c).value for c in (3, 4, 5, 6)] == [1, 0, 3, 4]
