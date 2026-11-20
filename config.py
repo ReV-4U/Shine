@@ -40,7 +40,7 @@ def validate(cfg: dict) -> None:
     _regex(cfg["input"]["folder_pattern"], "input.folder_pattern")
     if cfg["excel"]["checkbox_mode"] not in ("native", "dropdown"):
         raise ConfigError("excel.checkbox_mode doit valoir 'native' ou 'dropdown'")
-    for key, low in (("add_rows", 1), ("recap_max_removals", 0), ("history_rows", 0)):
+    for key, low in (("add_rows", 1), ("recap_max_removals", 0), ("history_rows", 0), ("date_choices_days", 1)):
         v = cfg["excel"][key]
         if not isinstance(v, int) or isinstance(v, bool) or v < low:
             raise ConfigError(f"excel.{key} doit être un entier ≥ {low}")

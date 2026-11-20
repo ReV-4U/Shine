@@ -119,7 +119,8 @@ si `owners:` regroupe plusieurs dossiers. Relancer le même jour écrase les fic
   `3-Confidentiel` : le niveau de `review.classification` est mis en évidence) ; tableau **Mise à jour**
   `Auteur | Date | Version | Nature de la modification | Approbation | Validation | Status`. La première ligne est
   écrite par Shine (création du classeur ; « Validation » reprend le statut de la signature) ; `excel.history_rows`
-  lignes libres suivent (6 par défaut) pour tracer les modifications. Réglages : `review.version`, `review.index`,
+  lignes libres suivent (6 par défaut) pour tracer les modifications ; les dates se choisissent dans une liste
+  déroulante (du jour de génération à `excel.date_choices_days` jours après, 90 par défaut ; saisie libre possible). Réglages : `review.version`, `review.index`,
   `review.classification`, `review.author`, `review.footer_notice` (mention rouge en pied de page, vide par défaut),
   couleurs `excel.colors.cover_*`.
 * **Instructions** : objectif, mode d'emploi (`texts.steps_*`), consigne de date limite (`texts.return_line`,

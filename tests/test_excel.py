@@ -69,7 +69,7 @@ def test_formula_injection_neutralised_everywhere(tmp_path, cfg):
     cfg["excel"]["show_dn"] = True
     _, paths = build_all(root, cfg, tmp_path / "out")
     wb = openpyxl.load_workbook(paths["A.Un"])
-    ok_formulas = ('="Progression', "=COUNTIF", "=SUBTOTAL", "=E", "=IF", "=IFERROR", "=SUMPRODUCT", "=SUM(", "='", "=B", "=I", "=$C")
+    ok_formulas = ('="Progression', "=COUNTIF", "=SUBTOTAL", "=E", "=IF", "=IFERROR", "=SUMPRODUCT", "=SUM(", "='", "=B", "=I", "=$C", "=TODAY()")
     seen = 0
     for ws in wb:
         for row in ws.iter_rows():
@@ -428,14 +428,25 @@ def test_instructions_signature_block(books):
     ws = wb["Instructions"]
     top = frow(ws, "Nom et prénom")
     assert [ws.cell(top + i, 2).value for i in range(6)] == [
-        "Nom et prénom", "Fonction", "Date de validation", "Je certifie avoir examiné toutes les lignes et le récapitulatif",
-        "Signature (saisissez votre nom)", "Statut de la validation"]
-    assert all(not ws.cell(top + i, 3).protection.locked for i in range(5))        # champs à remplir
+        "Nom et prénom", "Fonction", "Date de validation (jour / mois / année)",
+        "Je certifie avoir examiné toutes les lignes et le récapitulatif", "Signature (saisissez votre nom)",
+        "Statut de la validation"]
+    assert all(not ws.cell(top + i, 3).protection.locked for i in (0, 1, 3, 4))            # champs à remplir
+    assert all(not ws.cell(top + 2, col).protection.locked for col in (3, 4, 5))            # jour | mois | année sur une ligne
     status = ws.cell(top + 5, 3)
-    assert status.protection.locked and 'IF(AND(LEN(C' in status.value and '"Signé","Non signé"' in status.value
-    assert ws.cell(frow(ws, "Validation et signature") , 2).value == "Validation et signature"
+    assert status.protection.locked and 'IF(AND(LEN(C' in status.value and 'COUNTA(C' in status.value
+    assert '"Signé","Non signé"' in status.value
+    assert ws.cell(frow(ws, "Validation et signature"), 2).value == "Validation et signature"
     dv = {str(d.sqref): d for d in ws.data_validations.dataValidation}
-    assert dv[f"C{top + 3}"].formula1 == '"Oui,Non"' and dv[f"C{top + 2}"].type == "date"
+    # date : jour | mois | année dans trois listes sur la même ligne (pas de calendrier possible dans un .xlsx)
+    assert dv[f"C{top + 2}"].formula1.startswith('"1,2,3') and dv[f"C{top + 2}"].formula1.rstrip('"').endswith("31")
+    assert "01 - Janvier" in dv[f"D{top + 2}"].formula1 and "12 - Décembre" in dv[f"D{top + 2}"].formula1
+    assert dv[f"E{top + 2}"].formula1.count(",") == 2
+    assert f"C{top + 3}" not in dv                                                           # attestation = case à cocher
+    assert not any(d.type == "date" for d in ws.data_validations.dataValidation)
+    cal = wb["_calc"]
+    # dates proposées (historique de l'En-tête) à partir du jour d'ouverture du classeur (TODAY)
+    assert cal["Q2"].value == "=TODAY()" and cal["Q3"].value == "=TODAY()+1" and cal["Q92"].value == "=TODAY()+90" and cal["Q93"].value is None
     text = " ".join(str(c.value) for row in ws.iter_rows() for c in row if c.value)
     assert "signature numérique" in text and "En-tête" not in text.replace("Terminez", "")  # plus de renvoi vers l'En-tête
     meta = {r[0].value: r[1].value for r in openpyxl.load_workbook(books["E.Test7"])["_meta"][
@@ -474,7 +485,7 @@ def test_recap_calc_sheet_is_wired_to_decisions(books):
     assert calc["F2"].value == "Activites_etudes_Full" and calc["F5"].value == "Activites_etudes_Read" and calc["G2"].value == "E.Test7"
     assert calc["I2"].value.startswith("=IF(LEN(TRIM('Synthèse'!$A$14&") and calc["I21"].value.startswith("=I20+IF(")
     assert "'_meta'!" in calc["N2"].value and 'IFERROR' in calc["O2"].value
-    assert calc.max_row == 21
+    assert max(c.row for row in calc.iter_rows(max_col=15) for c in row if c.value is not None) == 21  # hors colonne Q (dates)
 
 
 def test_recap_cap_and_warning(ntftest, cfg, tmp_path):
@@ -545,8 +556,8 @@ def test_signature_status_live(ntftest, cfg, tmp_path):
     ws = wb["Instructions"]
     top = frow(ws, "Nom et prénom")
     ws.cell(top, 3).value = "Marie Dupont"
-    ws.cell(top + 2, 3).value = dt.date(2026, 11, 20)
-    ws.cell(top + 3, 3).value = "Oui"
+    ws.cell(top + 2, 3).value, ws.cell(top + 2, 4).value, ws.cell(top + 2, 5).value = 20, "11 - Novembre", 2026
+    ws.cell(top + 3, 3).value = True
     src = tmp_path / "s.xlsx"
     wb.save(src)
     got = _recalc(src, tmp_path)
@@ -555,4 +566,15 @@ def test_signature_status_live(ntftest, cfg, tmp_path):
     wb.save(src)
     got = _recalc(src, tmp_path)
     assert got["Instructions"].cell(top + 5, 3).value == "Signé"
+    ws.cell(top + 2, 3).value, ws.cell(top + 2, 4).value = 31, "02 - Février"             # date impossible
+    wb.save(src)
+    got = _recalc(src, tmp_path)
+    assert got["Instructions"].cell(top + 5, 3).value == "Non signé"
+    ws.cell(top + 2, 3).value, ws.cell(top + 2, 4).value, ws.cell(top + 2, 5).value = 20, "11 - Novembre", None   # année manquante
+    wb.save(src)
+    got = _recalc(src, tmp_path)
+    assert got["Instructions"].cell(top + 5, 3).value == "Non signé"
+    ws.cell(top + 2, 5).value = 2026
+    wb.save(src)
+    got = _recalc(src, tmp_path)
     assert got["En-tête"]["G11"].value == "Signé"                                          # repris dans le tableau « Mise à jour »

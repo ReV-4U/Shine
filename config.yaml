@@ -38,6 +38,7 @@ excel:
   add_rows: 20               # lignes du tableau « Personnes à ajouter » (onglet Synthèse)
   recap_max_removals: 500    # nombre maximal de retraits affichés dans l'onglet « Récapitulatif » (un avertissement s'affiche au-delà)
   history_rows: 6            # lignes libres du tableau « Mise à jour » (onglet « En-tête ») sous la ligne écrite par Shine
+  date_choices_days: 90       # liste déroulante des dates (signature, historique) : du jour de génération à N jours après
   show_dn: false             # true : ajoute une colonne « DN (annuaire) » avec le DN tel qu'exporté
   font: Calibri
   font_size: 10
@@ -84,7 +85,7 @@ texts:
     - "Il manque quelqu'un ? Renseignez le tableau « Personnes à ajouter » en bas de l'onglet Synthèse : nom, identifiant (facultatif), groupe de ressource (à choisir dans la liste), justification."
     - "Un commentaire général sur la ressource peut être saisi en bas de son onglet."
     - "Vérifiez l'onglet « Récapitulatif » : il se remplit tout seul avec les accès à retirer et les personnes à ajouter."
-    - "Terminez par le bloc « Validation et signature » plus bas dans cet onglet : nom, fonction, date, attestation et signature (saisie de votre nom)."
+    - "Terminez par le bloc « Validation et signature » plus bas dans cet onglet : nom, fonction, date (jour, mois, année à choisir dans les listes), attestation (case à cocher) et signature (saisie de votre nom)."
   steps_native:
     - "Ouvrez l'onglet « Synthèse » : chaque ressource à vérifier y figure avec un lien vers son onglet."
     - "Dans l'onglet d'une ressource, parcourez la liste. Cochez « Conserver » si l'accès est autorisé, ou « Retirer » s'il doit être supprimé. Ne cochez jamais les deux."
@@ -94,7 +95,7 @@ texts:
     - "Il manque quelqu'un ? Renseignez le tableau « Personnes à ajouter » en bas de l'onglet Synthèse : nom, identifiant (facultatif), groupe de ressource (à choisir dans la liste), justification."
     - "Un commentaire général sur la ressource peut être saisi en bas de son onglet."
     - "Vérifiez l'onglet « Récapitulatif » : il se remplit tout seul avec les accès à retirer et les personnes à ajouter."
-    - "Terminez par le bloc « Validation et signature » plus bas dans cet onglet : nom, fonction, date, attestation et signature (saisie de votre nom)."
+    - "Terminez par le bloc « Validation et signature » plus bas dans cet onglet : nom, fonction, date (jour, mois, année à choisir dans les listes), attestation (case à cocher) et signature (saisie de votre nom)."
   return_line: "Veuillez traiter la revue des droits NTFS avant le {deadline}. Une fois la revue terminée, signez dans le bloc « Validation et signature » de cet onglet. Ne renommez pas les onglets et ne modifiez pas la structure du classeur."
   protection_note: "Le classeur est protégé (sans mot de passe) : seules les zones à remplir sont modifiables. Les filtres restent utilisables ; pour trier, préférez les filtres (Excel interdit le tri dès qu'une cellule de la plage est verrouillée)."
   confidentiality_note: "Ce classeur contient des noms et identifiants de personnes : ne le transmettez qu'aux personnes concernées par la revue."

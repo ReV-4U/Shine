@@ -172,6 +172,13 @@ class BookBuilder:
         if self.cfg["excel"]["protect_sheets"]:
             ws.protect("", self.protect_opts)   # SANS mot de passe
 
+    def _date_dv(self, title: str) -> dict:
+        """Liste déroulante de dates (feuille cachée _calc, colonne Q), sans erreur bloquante à la saisie libre."""
+        n = self.cfg["excel"]["date_choices_days"] + 1
+        return {"validate": "list", "source": f"='{SHEET_CALC}'!$Q$2:$Q${n + 1}", "ignore_blank": True,
+                "show_error": False, "input_title": title,
+                "input_message": "Choisissez une date dans la liste, à partir d'aujourd'hui (ou saisissez-la)."}
+
     def _table_name(self, prefix: str) -> str:
         n = 1
         while f"{prefix}_{n}" in self.used_tables:
@@ -445,13 +452,14 @@ class BookBuilder:
         ws.hide_gridlines(2)
         ws.set_column(0, 0, 6)
         ws.set_column(1, 1, 34)
-        ws.set_column(2, 2, 76)
+        ws.set_column(2, 2, 26)      # C, D, E : 76 au total ; la date de validation y tient sur une ligne (jour | mois | année)
+        ws.set_column(3, 4, 25)
         wrap = F(text_wrap=True, valign="top")
         w = 110
         bd = {"border": 1, "border_color": c["border"]}
 
         def put(r, text, fmt=wrap):
-            ws.merge_range(r, 1, r, 2, safe(text), fmt)
+            ws.merge_range(r, 1, r, 4, safe(text), fmt)
             ws.set_row(r, max(16, 14 * math.ceil(len(text) / (w * 1.0)) + 3))
 
         values = {"label": self.book.label, "period": self.period, "contact": rv["contact"],
@@ -478,37 +486,59 @@ class BookBuilder:
 
         # ---- validation par le propriétaire du groupe (signature électronique simple)
         ws.write_string(r, 1, "Validation et signature", F(bold=True, font_color=c["title"], font_size=12)); r += 1
-        fields = ["Nom et prénom", "Fonction", "Date de validation",
+        fields = ["Nom et prénom", "Fonction", "Date de validation (jour / mois / année)",
                   "Je certifie avoir examiné toutes les lignes et le récapitulatif", "Signature (saisissez votre nom)"]
         lab = F(bold=True, valign="vcenter", text_wrap=True, bg_color="#F2F2F2", **bd)
-        inp = F(locked=False, bg_color=c["input_bg"], border=1, border_color=c["input_border"], valign="vcenter", text_wrap=True)
-        date_f = F(locked=False, bg_color=c["input_bg"], border=1, border_color=c["input_border"], num_format="dd/mm/yyyy",
-                   align="left", valign="vcenter")
+        inp = F(locked=False, bg_color=c["input_bg"], border=1, border_color=c["input_border"], valign="vcenter", text_wrap=True,
+                align="left")
         sig_f = F(locked=False, bg_color=c["input_bg"], border=1, border_color=c["input_border"], italic=True,
                   font_size=self.cfg["excel"]["font_size"] + 4, valign="vcenter")
+        chk_f = F(locked=False, bg_color=c["input_bg"], border=1, border_color=c["input_border"], align="left", valign="vcenter")
         top = r
+        status_row = top + len(fields)
+        d_, m_, y_ = (f"{col}{top + 3}" for col in "CDE")      # jour, mois, année : une seule ligne
+        self.sig = {"name": f"C{top + 1}", "role": f"C{top + 2}", "day": d_, "month": m_, "year": y_,
+                    "date": f"C{top + 3}:E{top + 3}", "attest": f"C{top + 4}", "signature": f"C{top + 5}",
+                    "status": f"C{status_row + 1}"}
+        s_ = self.sig
         for i, k in enumerate(fields):
             ws.write_string(top + i, 1, k, lab)
-            ws.write_blank(top + i, 2, None, date_f if i == 2 else sig_f if i == 4 else inp)
+            if i == 2:    # date : trois listes déroulantes sur la même ligne
+                for col in (2, 3, 4):
+                    ws.write_blank(top + i, col, None, inp)
+            elif i == 3:
+                ws.merge_range(top + i, 2, top + i, 4, "", chk_f)
+                ws.insert_checkbox(top + i, 2, False, chk_f)             # attestation : vraie case à cocher (TRUE / FALSE)
+            else:
+                ws.merge_range(top + i, 2, top + i, 4, "", sig_f if i == 4 else inp)
         ws.set_row(top + 3, 30)
         ws.set_row(top + 4, 36)
-        status_row = top + len(fields)
-        self.sig = {"name": f"C{top + 1}", "role": f"C{top + 2}", "date": f"C{top + 3}", "attest": f"C{top + 4}",
-                    "signature": f"C{top + 5}", "status": f"C{status_row + 1}"}
-        s_ = self.sig
-        ws.data_validation(top + 2, 2, top + 2, 2, {
-            "validate": "date", "criteria": "between", "minimum": dt.date(2020, 1, 1), "maximum": dt.date(2100, 12, 31),
-            "ignore_blank": True, "error_title": "Date invalide", "error_message": "Saisissez une date (JJ/MM/AAAA)."})
-        ws.data_validation(top + 3, 2, top + 3, 2, {
-            "validate": "list", "source": ["Oui", "Non"], "ignore_blank": True,
-            "error_title": "Valeur non autorisée", "error_message": "Choisissez Oui ou Non dans la liste."})
+        # Excel n'a pas de calendrier intégré dans un .xlsx : jour / mois / année se choisissent dans trois listes.
+        # Mois « 01 - Janvier » : le numéro est lu par LEFT(...,2), indépendant de la langue d'Excel.
+        months = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre",
+                  "Décembre"]
+        y0 = self.now.year
+        for col, vals, msg in ((2, [str(n) for n in range(1, 32)], "Jour : choisissez dans la liste."),
+                               (3, [f"{n:02d} - {m}" for n, m in enumerate(months, 1)], "Mois : choisissez dans la liste."),
+                               (4, [str(y0 + n) for n in range(3)], "Année : choisissez dans la liste.")):
+            ws.data_validation(top + 2, col, top + 2, col, {
+                "validate": "list", "source": vals, "ignore_blank": True,
+                "input_title": "Date de validation", "input_message": msg,
+                "error_title": "Valeur non autorisée", "error_message": "Choisissez une valeur dans la liste."})
+        # date retenue : valable seulement si les trois champs sont remplis et forment un jour qui existe (pas de 31 février)
+        d_v, m_v, y_v = f'VALUE({d_}&"")', f"VALUE(LEFT({m_},2))", f'VALUE({y_}&"")'
+        date_ok = f"IFERROR(AND(COUNTA({d_},{m_},{y_})=3,DAY(DATE({y_v},{m_v},{d_v}))={d_v}),FALSE)"
+        ws.conditional_format(top + 2, 2, top + 2, 4, {                  # jour impossible : les trois cases passent en rouge
+            "type": "formula", "criteria": f"=AND(COUNTA({d_},{m_},{y_})=3,NOT({date_ok}))",
+            "format": self.F.dxf(bg_color=c["ko"])})
         ws.write_string(status_row, 1, "Statut de la validation", F(bold=True, valign="vcenter", bg_color="#F2F2F2", **bd))
         stat = F(bold=True, valign="vcenter", **bd)
+        ws.merge_range(status_row, 2, status_row, 4, "", stat)
         ws.write_formula(status_row, 2,
-                         f'=IF(AND(LEN({s_["name"]})>0,LEN({s_["signature"]})>0,ISNUMBER({s_["date"]}),{s_["attest"]}="Oui"),"Signé","Non signé")',
+                         f'=IF(AND(LEN({s_["name"]})>0,LEN({s_["signature"]})>0,{date_ok},{s_["attest"]}=TRUE),"Signé","Non signé")',
                          stat, "Non signé")
         for text, color in (('"Signé"', c["ok"]), ('"Non signé"', c["todo_even"])):
-            ws.conditional_format(status_row, 2, status_row, 2, {"type": "cell", "criteria": "==", "value": text,
+            ws.conditional_format(status_row, 2, status_row, 4, {"type": "cell", "criteria": "==", "value": text,
                                                                   "format": self.F.dxf(bg_color=color)})
         r = status_row + 1
         put(r, " ".join(t["signature_hint"].split()), F(italic=True, font_color="#595959", text_wrap=True, valign="top"))
@@ -599,9 +629,7 @@ class BookBuilder:
                 ws.write_blank(rr, 1 + j, None, free_date if j == 1 else free)
             ws.set_row(rr, 20)
         if n_free:
-            ws.data_validation(r1 + 1, 2, r1 + n_free, 2, {
-                "validate": "date", "criteria": "between", "minimum": dt.date(2020, 1, 1), "maximum": dt.date(2100, 12, 31),
-                "ignore_blank": True, "error_title": "Date invalide", "error_message": "Saisissez une date (JJ/MM/AAAA)."})
+            ws.data_validation(r1 + 1, 2, r1 + n_free, 2, self._date_dv("Date de la modification"))
         self.hist_first, self.hist_last = r1 + 1, r1 + n_free
 
         notice = str(rv.get("footer_notice") or "").strip()
@@ -793,10 +821,16 @@ class BookBuilder:
         """
         F = self.F
         heads = ["feuille", "cumul retraits", "nom", "identifiant", "commentaire", "groupe", "propriétaire", "",
-                 "cumul ajouts", "nom", "identifiant", "groupe", "justification", "droit", "propriétaire"]
+                 "cumul ajouts", "nom", "identifiant", "groupe", "justification", "droit", "propriétaire", "", "dates proposées"]
         for j, h in enumerate(heads):
             if h:
                 ws.write_string(0, j, h, F(bold=True))
+        day0 = dt.datetime.combine(self.now.date(), dt.time())
+        datef = F(num_format="dd/mm/yyyy", align="left")
+        for k in range(self.cfg["excel"]["date_choices_days"] + 1):
+            # colonne Q : dates proposées dans les listes, à partir du jour d'OUVERTURE du classeur (TODAY recalculé à l'ouverture)
+            ws.write_formula(1 + k, 16, "=TODAY()" + (f"+{k}" if k else ""), datef,
+                             (day0 + dt.timedelta(days=k) - dt.datetime(1899, 12, 30)).days)
         groups = {(g["sheet"], g["level"]): g["group"] for g in self.groups}
         r = 1
         for info in infos:
@@ -874,7 +908,7 @@ class BookBuilder:
             ("add_col_justification", "F (fusion F:H)"),
             ("cover_sheet", SHEET_COVER),
             ("signature_sheet", SHEET_INSTR),
-            ("signature_cells", f"nom {self.sig['name']} · fonction {self.sig['role']} · date {self.sig['date']} · "
+            ("signature_cells", f"nom {self.sig['name']} · fonction {self.sig['role']} · date (jour, mois, année) {self.sig['date']} · "
                                       f"attestation {self.sig['attest']} · signature {self.sig['signature']} · statut {self.sig['status']}"),
             ("cover_history_rows", f"{self.hist_first + 1}-{self.hist_last + 1} (colonnes B:H : " + ", ".join(UPDATE_COLS) + ")"),
             ("classification", str(self.cfg["review"].get("classification") or "")),
